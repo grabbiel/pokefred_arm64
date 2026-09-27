@@ -505,7 +505,9 @@ final class MapGPUState {
     }
 
     /// Keeps a CPU copy of the index atlas and marks every ring slot dirty.
-    /// `encode` memcpy's `spans` into the slot the GPU is not reading.
+    /// `encode` memcpy's `spans` into the slot the GPU is not reading. A slot
+    /// that has not flushed yet keeps its earlier row ranges, so a later clip
+    /// does not drop the previous clip's rows.
     func rewriteIndexRows(_ indices: [UInt8], spans: [AtlasRowSpan]) -> Bool {
         guard tilesetReady, atlasWidth > 0, atlasHeight > 0, indexRing != nil else {
             failTileset("Index atlas is not ready for animation.")
@@ -523,7 +525,11 @@ final class MapGPUState {
             }
         }
         cpuIndices = Array(indices)
-        animSpans = spans
+        if animDirty.isAnyDirty {
+            animSpans = AtlasRowSpan.union(animSpans + spans)
+        } else {
+            animSpans = AtlasRowSpan.union(spans)
+        }
         animDirty.markAllDirty()
         return true
     }

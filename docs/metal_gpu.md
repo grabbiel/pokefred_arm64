@@ -30,16 +30,21 @@ Metatile behavior and a full layer-type split are not applied. Both layers are s
 
 ## Tileset animation stub
 
-Pallet Town water is the only animated range. pret's `gTileset_General` callback (`TilesetAnim_General` in `tileset_anims.c`) copies `water_current_landwatersedge` when `counter % 16 == 1`, frame `counter / 16`, onto 4bpp tile 416 for 48 tiles. The counter wraps at 640. Those frames are separate PNGs, not extra tiles in `tiles.png`.
+Pallet Town animates two ranges from pret's `gTileset_General` callback (`TilesetAnim_General` in `tileset_anims.c`). The counter wraps at 640. The frames are separate graphics, not extra tiles in `tiles.png`.
 
-`PalletTownTilesetAnim` does not load those PNGs. It is a stub table for the four tile ids this map samples: **416…419** (metatiles 291, 298, 299, 300, 721, and 722). Eight frames, same period and phase as pret. Frame 0 is the baked atlas tile. Frame `n` rotates each of those tiles up by `n` pixels. The shader does not animate; `map_tile_fragment` still samples the shared index atlas.
+Water copies `water_current_landwatersedge` when `counter % 16 == 1`, frame `counter / 16`, onto 4bpp tile 416 for 48 tiles. `PalletTownTilesetAnim` does not load those frames. It stubs the four tile ids this map samples: **416…419** (metatiles 291, 298, 299, 300, 721, and 722). Eight frames, same period and phase as pret. Frame 0 is the baked atlas tile. Frame `n` rotates each of those tiles up by `n` pixels.
 
-The map view stays paused (`isPaused`, `enableSetNeedsDisplay`). A 60 Hz timer stands in for the GBA vblank counter. On a tick that queues a frame, the CPU writes the new indices into its atlas copy and marks the triple ring dirty. `encode` memcpy's only the affected pixel rows — tile row 26, pixel rows 208…215 — into the slot the GPU has finished reading. The status line shows `water frame N`.
+Flowers copy `flower` when `counter % 16 == 2`, frame `counter / 16`, onto tiles **508…511** (4 tiles, 5 frames). Those tiles are the top layer of metatile **4**. Pallet Town places that metatile eight times, in a block at cells (5…8, 12…13). The stub keeps pret's id, period, phase, and frame count. Frame 0 is the baked tile. Frame `n` rotates each of those tiles left by `n` pixels.
+
+The shader does not animate; `map_tile_fragment` still samples the shared index atlas.
+
+The map view stays paused (`isPaused`, `enableSetNeedsDisplay`). A 60 Hz timer stands in for the GBA vblank counter. On a tick that queues a frame, the CPU writes the new indices into its atlas copy and marks the triple ring dirty. `encode` memcpy's only the affected pixel rows into the slot the GPU has finished reading: water is tile row 26 (pixel rows 208…215), flowers are tile row 31 (pixel rows 248…255). A slot that has not flushed since the previous clip keeps both row ranges, so a flower tick does not drop a pending water rewrite. The status line shows `water frame N` and `flower frame N`.
 
 ### Known gaps
 
-- Frame pixels are this scroll, not pret's `water_current_landwatersedge/*.png` frames.
-- The other 44 tiles of that DMA (420…463) stay on the baked graphics. Sand-water edge (tile 464, 18 tiles) and flowers (tiles 508…511, metatile 4) do not animate.
+- Frame pixels are this scroll, not pret's `water_current_landwatersedge` or `flower` frames.
+- The other 44 tiles of the water DMA (420…463) stay on the baked graphics.
+- Sand-water edge (tile 464, 18 tiles, `counter % 8 == 0`) does not animate. Pallet Town's layout does not use those metatiles.
 - Other maps still have no 4bpp atlas. Full multi-map tilesets are out of scope.
 - Secondary tileset callbacks are not run.
 
@@ -49,13 +54,13 @@ Ground metatiles are unchanged: one instanced draw, both GBA layers, depth 0.70.
 
 ## Object sprites
 
-The pass submits object sprites, then canopy, then ground, then markers and selection. Object sprites are a separate triple `MTLStorageModeShared` ring of `MapQuadInstance` quads (`label: "sprites"`), drawn with the same `map_sprite_vertex` `[[stage_in]]` path and the same less-than depth-stencil. Their depth is 0.20, so they cover the leaves and the later ground quads. The list is two stand-ins and only when `mapId` is `MAP_PALLET_TOWN`: a blue NPC on the south-west wide tree top (the quad overlaps the leaf half of that cell) and a red player on open ground at cell (8, 15), in front of that metatile. Those anchors are Pallet sample proof geometry, not coordinates for other maps. Markers stay at 0.28, in front of the leaves and behind the sprites. Water animation still rewrites the same shared index rows and is not part of this layer. The status line shows `canopy N` and `sprites N`.
+The pass submits object sprites, then canopy, then ground, then markers and selection. Object sprites are a separate triple `MTLStorageModeShared` ring of `MapQuadInstance` quads (`label: "sprites"`), drawn with the same `map_sprite_vertex` `[[stage_in]]` path and the same less-than depth-stencil. Their depth is 0.20, so they cover the leaves and the later ground quads. The list is two stand-ins and only when `mapId` is `MAP_PALLET_TOWN`: a blue NPC on the south-west wide tree top (the quad overlaps the leaf half of that cell) and a red player on open ground at cell (8, 15), in front of that metatile. Those anchors are Pallet sample proof geometry, not coordinates for other maps. Markers stay at 0.28, in front of the leaves and behind the sprites. Water and flower animation still rewrite shared index rows and are not part of this layer. The status line shows `canopy N` and `sprites N`.
 
 This is not a metatile layer-type table. Roofs, the north tree wall, and other top-layer pixels stay in the ground composite.
 
 ## Ring buffers
 
-`FrameRing` has three slots. `draw` waits on a semaphore before taking a slot and signals it from the command-buffer completed handler, so the CPU does not write a buffer the GPU is still reading. `makeBuffer` runs when a ring is created and again only if a map outgrows `RingCapacity` (the initial grid holds 4096 cells; Pallet Town is 480). A selection change marks slots dirty and copies four instances into the existing selection ring. The index atlas uses the same three shared slots; an animation tick dirties them and the draw copies only the water rows into the free slot.
+`FrameRing` has three slots. `draw` waits on a semaphore before taking a slot and signals it from the command-buffer completed handler, so the CPU does not write a buffer the GPU is still reading. `makeBuffer` runs when a ring is created and again only if a map outgrows `RingCapacity` (the initial grid holds 4096 cells; Pallet Town is 480). A selection change marks slots dirty and copies four instances into the existing selection ring. The index atlas uses the same three shared slots; an animation tick dirties them and the draw copies only the water and flower rows that still need a flush into the free slot.
 
 ## Stage-in and depth
 
