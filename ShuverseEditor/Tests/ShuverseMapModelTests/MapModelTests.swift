@@ -171,6 +171,32 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(decoded.activeMap?.cells, cells)
     }
 
+    func testBrushPaintWritesCellAndMarksDirty() throws {
+        var document = EditorDocument()
+        try document.importParserMap(Data(contentsOf: palletTownURL()))
+        XCTAssertFalse(document.paintBrush(x: 0, y: 0))
+        XCTAssertEqual(document.activeMap?.cell(x: 0, y: 0)?.metatileId, 28)
+        XCTAssertTrue(document.dirtyMaps.isEmpty)
+
+        XCTAssertTrue(document.selectBrush(metatileId: 678))
+        XCTAssertFalse(document.paintBrush(x: -1, y: 0))
+        XCTAssertFalse(document.paintBrush(x: 24, y: 0))
+        XCTAssertTrue(document.dirtyMaps.isEmpty)
+
+        XCTAssertTrue(document.paintBrush(x: 0, y: 0))
+        XCTAssertEqual(document.activeMap?.cell(x: 0, y: 0)?.metatileId, 678)
+        XCTAssertEqual(document.activeMap?.cell(x: 0, y: 0)?.mapAttribute, 1)
+        XCTAssertEqual(document.activeMap?.dirty.cells, true)
+        XCTAssertEqual(document.dirtyMaps, ["MAP_PALLET_TOWN"])
+        XCTAssertFalse(document.paintBrush(x: 0, y: 0))
+        XCTAssertEqual(document.activeMap?.cell(x: 12, y: 0)?.metatileId, 678)
+
+        let decoded = try JSONDecoder().decode(EditorDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(decoded.dirtyMaps, ["MAP_PALLET_TOWN"])
+        XCTAssertEqual(decoded.activeMap?.cell(x: 0, y: 0)?.metatileId, 678)
+        XCTAssertEqual(decoded.activeMap?.cell(x: 0, y: 0)?.mapAttribute, 1)
+    }
+
     func testRejectsInconsistentBlockdata() {
         XCTAssertThrowsError(try MapDocument(parserJSON: Data(mapJSON(ids: [2000], attributes: [1]).utf8))) { error in
             XCTAssertEqual(error as? MapModelError, .metatileOutOfRange(index: 0, value: 2000))
