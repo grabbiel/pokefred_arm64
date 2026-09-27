@@ -69,6 +69,12 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/generic_building_1_tiles.png $(BUILD)/cli_generic_building_1.4bpp $(BUILD)/cli_generic_building_1.pal
 	cmp $(BUILD)/cli_generic_building_1.4bpp tests/golden/generic_building_1_tiles.4bpp
 	cmp $(BUILD)/cli_generic_building_1.pal tests/golden/generic_building_1_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/bike_shop_tiles.png $(BUILD)/cli_bike_shop.4bpp $(BUILD)/cli_bike_shop.pal
+	cmp $(BUILD)/cli_bike_shop.4bpp tests/golden/bike_shop_tiles.4bpp
+	cmp $(BUILD)/cli_bike_shop.pal tests/golden/bike_shop_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/saffron_gym_tiles.png $(BUILD)/cli_saffron_gym.4bpp $(BUILD)/cli_saffron_gym.pal
+	cmp $(BUILD)/cli_saffron_gym.4bpp tests/golden/saffron_gym_tiles.4bpp
+	cmp $(BUILD)/cli_saffron_gym.pal tests/golden/saffron_gym_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@
