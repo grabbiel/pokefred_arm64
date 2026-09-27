@@ -90,7 +90,7 @@ final class ImGuiMetalRenderer {
             znear: 0,
             zfar: 1
         ))
-        var ortho = projection(
+        let ortho = projection(
             left: data.display_x,
             right: data.display_x + data.display_w,
             top: data.display_y,
@@ -172,7 +172,7 @@ final class ImGuiMetalRenderer {
     }
 
     private func ensurePipeline(colorPixelFormat: MTLPixelFormat) -> Bool {
-        if let pipeline, pipelineFormat == colorPixelFormat {
+        if pipeline != nil, pipelineFormat == colorPixelFormat {
             return true
         }
         guard let library = makeLibrary(),

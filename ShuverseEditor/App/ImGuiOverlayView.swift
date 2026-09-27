@@ -160,7 +160,7 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
         depthStencilPixelFormat = .invalid
         sampleCount = 1
         clearColor = MTLClearColorMake(0, 0, 0, 0)
-        isOpaque = false
+        // MTKView.isOpaque is get-only. Transparency is the CAMetalLayer plus a clear alpha of 0.
         layer?.isOpaque = false
         if let metalLayer = layer as? CAMetalLayer {
             metalLayer.isOpaque = false
