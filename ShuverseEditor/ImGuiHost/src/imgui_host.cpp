@@ -140,12 +140,16 @@ void ig_host_dockspace(void)
         ImGuiID bottom = 0;
         ImGuiID status = 0;
         ImGuiID tileset = 0;
+        ImGuiID inspector = 0;
+        ImGuiID events = 0;
         ImGui::DockBuilderSplitNode(id, ImGuiDir_Left, 0.22f, &left, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.34f, &right, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
         ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.46f, &tileset, &status);
+        ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.46f, &events, &inspector);
         ImGui::DockBuilderDockWindow("Map List", left);
-        ImGui::DockBuilderDockWindow("Inspector", right);
+        ImGui::DockBuilderDockWindow("Inspector", inspector);
+        ImGui::DockBuilderDockWindow("Events", events);
         ImGui::DockBuilderDockWindow("Status", status);
         ImGui::DockBuilderDockWindow("Tileset", tileset);
         ImGui::DockBuilderFinish(id);

@@ -14,6 +14,7 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
     var onOpenJSON: (() -> Void)?
     var onDropURL: ((URL) -> Void)?
     var onSelectBrush: ((UInt16) -> Void)?
+    var onSelectEvent: ((String) -> Void)?
     var keepCanvasFirstResponder: (() -> Void)?
 
     private let renderer: ImGuiMetalRenderer?
@@ -147,6 +148,7 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
         }
         ig_host_new_frame(Float(bounds.width), Float(bounds.height), scaleX, scaleY, dt, mx, my)
         let action = ImGuiDockShell.build(model)
+        let eventKey = ImGuiEventsDock.build()
         ig_host_render()
 
         commandBuffer.label = "imgui-frame"
@@ -159,6 +161,7 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
         commandBuffer.commit()
         applyCursor()
         dispatch(action)
+        dispatchEvent(eventKey)
     }
 
     private func configure() {
@@ -249,6 +252,13 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
             if openJSON {
                 self?.onOpenJSON?()
             }
+        }
+    }
+
+    private func dispatchEvent(_ key: String?) {
+        guard let key else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onSelectEvent?(key)
         }
     }
 }
