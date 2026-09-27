@@ -4,3 +4,4 @@ game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png
 pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png
 mart_tiles.png data/tilesets/secondary/mart/tiles.png
 school_tiles.png data/tilesets/secondary/school/tiles.png
+underground_path_tiles.png data/tilesets/secondary/underground_path/tiles.png
