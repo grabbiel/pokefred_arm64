@@ -12,7 +12,7 @@ struct MapUniforms {
     var pad: Float
 }
 
-final class MapCanvasView: MTKView, MTKViewDelegate, NSDraggingDestination {
+final class MapCanvasView: MTKView, MTKViewDelegate {
     var onInspect: ((CellInspection?) -> Void)?
     var onCameraChange: ((String) -> Void)?
     var onRendererNote: ((String?) -> Void)?
@@ -341,11 +341,11 @@ final class MapCanvasView: MTKView, MTKViewDelegate, NSDraggingDestination {
         onCameraChange?(statusLine())
     }
 
-    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         JSONDrop.fileURL(from: sender) == nil ? [] : .copy
     }
 
-    func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         guard let url = JSONDrop.fileURL(from: sender) else { return false }
         onDropURL?(url)
         return true

@@ -10,7 +10,7 @@ final class EditorWindowController: NSWindowController {
     private let textView: NSTextView
     private let textScroll: NSScrollView
 
-    private var document = EditorDocument()
+    private var editorDocument = EditorDocument()
     private var selection: CellInspection?
     private var rendererNote: String?
 
@@ -46,10 +46,10 @@ final class EditorWindowController: NSWindowController {
 
     func openMap(at url: URL) {
         do {
-            try document.importParserMap(Data(contentsOf: url))
+            try editorDocument.importParserMap(Data(contentsOf: url))
             selection = nil
             refreshChrome()
-            canvas.setMap(document.activeMap, fit: true)
+            canvas.setMap(editorDocument.activeMap, fit: true)
         } catch {
             present(message: error.localizedDescription)
         }
@@ -188,17 +188,17 @@ final class EditorWindowController: NSWindowController {
 
     @objc private func activeMapChanged(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem
-        guard document.maps.indices.contains(index) else { return }
-        let mapId = document.maps[index].mapId
-        guard document.focus(mapId: mapId) else { return }
+        guard editorDocument.maps.indices.contains(index) else { return }
+        let mapId = editorDocument.maps[index].mapId
+        guard editorDocument.focus(mapId: mapId) else { return }
         selection = nil
-        canvas.setMap(document.activeMap, fit: true)
+        canvas.setMap(editorDocument.activeMap, fit: true)
         refreshChrome()
     }
 
     private func refreshChrome() {
         rebuildMapPopup()
-        var body = InspectorText.make(document: document, selection: selection)
+        var body = InspectorText.make(document: editorDocument, selection: selection)
         if let rendererNote, !rendererNote.isEmpty {
             body = "Metal\n  \(rendererNote)\n\n" + body
         }
@@ -207,22 +207,22 @@ final class EditorWindowController: NSWindowController {
             .foregroundColor: NSColor(srgbRed: 0.90, green: 0.91, blue: 0.93, alpha: 1),
         ]
         textView.string = body
-        window?.title = "Shuverse Editor — \(document.activeMap?.name ?? "No Map")"
+        window?.title = "Shuverse Editor — \(editorDocument.activeMap?.name ?? "No Map")"
         statusLabel.stringValue = statusText(canvas.statusLine())
     }
 
     private func rebuildMapPopup() {
         mapPopup.removeAllItems()
-        if document.maps.isEmpty {
+        if editorDocument.maps.isEmpty {
             mapPopup.addItem(withTitle: "No map")
             mapPopup.isEnabled = false
             return
         }
         mapPopup.isEnabled = true
-        for map in document.maps {
+        for map in editorDocument.maps {
             mapPopup.addItem(withTitle: "\(map.name) — \(map.mapId)")
         }
-        if let index = document.maps.firstIndex(where: { $0.mapId == document.activeMapId }) {
+        if let index = editorDocument.maps.firstIndex(where: { $0.mapId == editorDocument.activeMapId }) {
             mapPopup.selectItem(at: index)
         }
     }
@@ -238,7 +238,7 @@ final class EditorWindowController: NSWindowController {
 extension EditorWindowController: NSWindowDelegate {}
 
 enum JSONDrop {
-    static func fileURL(from sender: NSDraggingInfo) -> URL? {
+    static func fileURL(from sender: any NSDraggingInfo) -> URL? {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [
             .urlReadingFileURLsOnly: true,
         ]
@@ -249,7 +249,7 @@ enum JSONDrop {
     }
 }
 
-final class JSONDropView: NSView, NSDraggingDestination {
+final class JSONDropView: NSView {
     var onDropURL: ((URL) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -262,11 +262,11 @@ final class JSONDropView: NSView, NSDraggingDestination {
         registerForDraggedTypes([.fileURL])
     }
 
-    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         JSONDrop.fileURL(from: sender) == nil ? [] : .copy
     }
 
-    func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         guard let url = JSONDrop.fileURL(from: sender) else { return false }
         onDropURL?(url)
         return true
