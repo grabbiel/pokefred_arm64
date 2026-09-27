@@ -75,6 +75,9 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/saffron_gym_tiles.png $(BUILD)/cli_saffron_gym.4bpp $(BUILD)/cli_saffron_gym.pal
 	cmp $(BUILD)/cli_saffron_gym.4bpp tests/golden/saffron_gym_tiles.4bpp
 	cmp $(BUILD)/cli_saffron_gym.pal tests/golden/saffron_gym_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/viridian_gym_tiles.png $(BUILD)/cli_viridian_gym.4bpp $(BUILD)/cli_viridian_gym.pal
+	cmp $(BUILD)/cli_viridian_gym.4bpp tests/golden/viridian_gym_tiles.4bpp
+	cmp $(BUILD)/cli_viridian_gym.pal tests/golden/viridian_gym_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@
