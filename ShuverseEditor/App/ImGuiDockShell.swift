@@ -19,6 +19,7 @@ struct ImGuiDockModel {
     var swatches: MetatileSwatchSheet?
     var swatchTexID: UInt64
     var swatchNote: String
+    var brushMetatileId: UInt16?
 
     static let empty = ImGuiDockModel(
         maps: [],
@@ -30,7 +31,8 @@ struct ImGuiDockModel {
         tilesetSecondary: "",
         swatches: nil,
         swatchTexID: 0,
-        swatchNote: ""
+        swatchNote: "",
+        brushMetatileId: nil
     )
 }
 
@@ -38,14 +40,12 @@ struct ImGuiShellAction {
     var focusMapId: String?
     var openSample = false
     var openJSON = false
+    var brushMetatileId: UInt16?
 }
 
 /// Builds the four dock windows. The central node stays empty so the map
 /// canvas shows through; `ig_host_hit` uses that hole for event routing.
 enum ImGuiDockShell {
-    private static var selectedMetatile = -1
-    private static var selectedMapKey = ""
-
     static func build(_ model: ImGuiDockModel) -> ImGuiShellAction {
         var action = ImGuiShellAction()
         ig_host_dockspace()
@@ -93,10 +93,6 @@ enum ImGuiDockShell {
         ig_host_end()
 
         if ig_host_begin("Tileset") != 0 {
-            if model.mapKey != selectedMapKey {
-                selectedMapKey = model.mapKey
-                selectedMetatile = -1
-            }
             text("Tileset")
             if model.tilesetPrimary.isEmpty && model.tilesetSecondary.isEmpty {
                 text("No tileset on the active map.")
@@ -106,12 +102,14 @@ enum ImGuiDockShell {
             }
             if let sheet = model.swatches, model.swatchTexID != 0 {
                 text("\(sheet.count) metatiles from the 4bpp atlas")
-                if selectedMetatile >= 0 {
-                    text("metatile \(selectedMetatile)")
+                if let brush = model.brushMetatileId {
+                    text("brush metatile \(brush)")
                 }
                 ig_host_separator()
                 if ig_host_begin_child("tileset-swatches") != 0 {
-                    drawSwatches(sheet, texID: model.swatchTexID)
+                    if let picked = drawSwatches(sheet, texID: model.swatchTexID, brush: model.brushMetatileId) {
+                        action.brushMetatileId = picked
+                    }
                 }
                 ig_host_end_child()
             } else if !model.swatchNote.isEmpty {
@@ -136,11 +134,16 @@ enum ImGuiDockShell {
         label.withCString { ig_host_selectable($0, selected ? 1 : 0) != 0 }
     }
 
-    private static func drawSwatches(_ sheet: MetatileSwatchSheet, texID: UInt64) {
+    private static func drawSwatches(
+        _ sheet: MetatileSwatchSheet,
+        texID: UInt64,
+        brush: UInt16?
+    ) -> UInt16? {
         ig_host_push_swatch_style()
         let button: Float = 32
         let gap: Float = 2
         let columns = max(1, Int((ig_host_content_width() + gap) / (button + gap + 2)))
+        var picked: UInt16?
         for id in 0..<sheet.count {
             let uv = sheet.uv(for: id)
             let clicked = ig_host_image_button(
@@ -152,15 +155,16 @@ enum ImGuiDockShell {
                 uv.v1,
                 button,
                 button,
-                selectedMetatile == id ? 1 : 0
+                brush == UInt16(id) ? 1 : 0
             ) != 0
-            if clicked {
-                selectedMetatile = id
+            if clicked, let metatileId = UInt16(exactly: id) {
+                picked = metatileId
             }
             if (id + 1) % columns != 0 {
                 ig_host_same_line()
             }
         }
         ig_host_pop_swatch_style()
+        return picked
     }
 }

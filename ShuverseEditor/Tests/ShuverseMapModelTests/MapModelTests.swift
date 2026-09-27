@@ -113,6 +113,25 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(decoded.decompRoot, "/tmp/pokefirered")
         XCTAssertEqual(decoded.activeMap?.cells, document.activeMap?.cells)
         XCTAssertEqual(decoded.sharedTilesets, document.sharedTilesets)
+        XCTAssertNil(decoded.brushMetatileId)
+    }
+
+    func testBrushSelectStoresMetatileWithoutPainting() throws {
+        var document = EditorDocument(decompRoot: "/tmp/pokefirered")
+        try document.importParserMap(Data(contentsOf: palletTownURL()))
+        let cells = document.activeMap?.cells
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertFalse(document.selectBrush(metatileId: -1))
+        XCTAssertFalse(document.selectBrush(metatileId: GBATileset.metatileCount))
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertTrue(document.selectBrush(metatileId: 678))
+        XCTAssertEqual(document.brushMetatileId, 678)
+        XCTAssertEqual(document.activeMap?.cells, cells)
+        XCTAssertTrue(document.dirtyMaps.isEmpty)
+
+        let decoded = try JSONDecoder().decode(EditorDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(decoded.brushMetatileId, 678)
+        XCTAssertEqual(decoded.activeMap?.cells, cells)
     }
 
     func testRejectsInconsistentBlockdata() {

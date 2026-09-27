@@ -131,6 +131,9 @@ final class EditorWindowController: NSWindowController {
         overlay.onDropURL = { [weak self] url in
             self?.openMap(at: url)
         }
+        overlay.onSelectBrush = { [weak self] metatileId in
+            self?.editorDocument.selectBrush(metatileId: Int(metatileId))
+        }
         overlay.keepCanvasFirstResponder = { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self.canvas)
@@ -177,7 +180,8 @@ final class EditorWindowController: NSWindowController {
             tilesetSecondary: secondary,
             swatches: swatchSheet,
             swatchTexID: 0,
-            swatchNote: swatchNote
+            swatchNote: swatchNote,
+            brushMetatileId: editorDocument.brushMetatileId
         )
     }
 

@@ -8,19 +8,31 @@ public struct EditorDocument: Codable, Equatable {
     public var activeMapId: String?
     public var sharedTilesets: [String: Tileset]
     public var dirtyMaps: Set<String>
+    /// Metatile chosen in the tileset dock. Selection only; cells stay unchanged.
+    public var brushMetatileId: UInt16?
 
     public init(
         decompRoot: String = "",
         maps: [MapDocument] = [],
         activeMapId: String? = nil,
         sharedTilesets: [String: Tileset] = [:],
-        dirtyMaps: Set<String> = []
+        dirtyMaps: Set<String> = [],
+        brushMetatileId: UInt16? = nil
     ) {
         self.decompRoot = decompRoot
         self.maps = maps
         self.activeMapId = activeMapId
         self.sharedTilesets = sharedTilesets
         self.dirtyMaps = dirtyMaps
+        self.brushMetatileId = brushMetatileId
+    }
+
+    /// Records the tileset-dock brush. Does not paint or mark a map dirty.
+    @discardableResult
+    public mutating func selectBrush(metatileId: Int) -> Bool {
+        guard (0..<GBATileset.metatileCount).contains(metatileId) else { return false }
+        brushMetatileId = UInt16(metatileId)
+        return true
     }
 
     public var activeMap: MapDocument? {
