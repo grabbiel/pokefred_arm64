@@ -12,20 +12,59 @@ public enum MapGeometry {
 }
 
 /// Depth values written by the canvas. Smaller is closer (`MTLCompareFunction.less`).
-/// Sprite and canopy slots are reserved so later draws can sort against the
-/// same depth-stencil state without a new attachment.
+/// Object sprites, then canopy, are submitted before ground in the same pass.
+/// The depth test keeps sprites in front of the leaves and both in front of ground.
 public enum MapDepth {
     public static let clear: Float = 1
-    /// Metatile quads.
+    /// Metatile quads. Both GBA layers, composited.
     public static let ground: Float = 0.70
-    /// Reserved for NPC / player sprites, in front of the ground.
-    public static let sprite: Float = 0.55
-    /// Reserved for canopy (tree tops), in front of sprites.
+    /// Tree-top leaves, in front of ground and behind object sprites.
     public static let canopy: Float = 0.40
-    /// Event markers. In front of canopy so editor chrome stays visible.
+    /// Event markers. In front of canopy so editor chrome stays visible over leaves.
     public static let marker: Float = 0.28
+    /// Object sprites. In front of canopy (and of the event markers).
+    public static let sprite: Float = 0.20
     /// Selection outline. Closest layer drawn in v1.
     public static let selection: Float = 0.15
+}
+
+/// pret general-tileset tree tops (`METATILE_General_ThinTreeTop_*` and
+/// `METATILE_General_WideTreeTop_*`). These are metatile ids, not Pallet Town
+/// cell coordinates. `canopy(on:)` matches them on any map. The top 2×2 is the
+/// overhanging leaves. The bottom 2×2 stays in the ground pass.
+public enum GeneralTilesetTreeTops {
+    public static let treeTopMetatileIds: Set<UInt16> = [
+        0x00A, // ThinTreeTop_Grass
+        0x00B, // WideTreeTopLeft_Grass
+        0x00C, // WideTreeTopRight_Grass
+        0x00E, // WideTreeTopLeft_Mowed
+        0x00F, // WideTreeTopRight_Mowed
+        0x013, // ThinTreeTop_Mowed
+    ]
+}
+
+/// Pallet Town object-sprite stand-ins. Valid only when `mapId` is
+/// `MAP_PALLET_TOWN`. Not coordinates for other maps.
+private enum PalletTownObjectSprites {
+    static let mapId = "MAP_PALLET_TOWN"
+    /// South-west `METATILE_General_WideTreeTopLeft_Mowed`. The quad overlaps the leaves.
+    static let npcX = 2
+    static let npcY = 19
+    /// Town ground below Oak's lab, not a tree top.
+    static let playerX = 8
+    static let playerY = 15
+}
+
+/// One canopy quad. `cellIndex` selects a word in `MapMetatileGrid`.
+/// 8 bytes: uint cell index, float depth. Matches the canopy vertex descriptor.
+public struct MapCanopyInstance: Equatable {
+    public var cellIndex: UInt32
+    public var depth: Float
+
+    public init(cellIndex: Int, depth: Float = MapDepth.canopy) {
+        self.cellIndex = UInt32(cellIndex)
+        self.depth = depth
+    }
 }
 
 /// One cell of the shared GPU grid. Low 16 bits are `MapCell.raw`
@@ -161,6 +200,64 @@ public enum MapDrawListBuilder {
         return instances
     }
 
+    /// Cells whose metatile id is in `GeneralTilesetTreeTops`. Matched on any
+    /// map; this is not a Pallet Town layout. The GPU draws only that metatile's
+    /// top layer, at `MapDepth.canopy`. Ground is not rebuilt.
+    public static func canopy(on map: MapDocument) -> [MapCanopyInstance] {
+        let count = min(map.cells.count, map.size.cellCount)
+        var instances: [MapCanopyInstance] = []
+        for index in 0..<count {
+            guard GeneralTilesetTreeTops.treeTopMetatileIds.contains(map.cells[index].metatileId) else { continue }
+            instances.append(MapCanopyInstance(cellIndex: index))
+        }
+        return instances
+    }
+
+    /// Two solid quads on the Pallet Town sample, at `MapDepth.sprite`.
+    /// Anchors are `PalletTownObjectSprites` and apply only for that map id.
+    /// The blue NPC overlaps the south-west wide tree top, so it covers the leaves.
+    /// The red player stands on open ground, in front of that metatile.
+    /// Empty for every other map.
+    public static func sprites(on map: MapDocument) -> [MapQuadInstance] {
+        guard map.mapId == PalletTownObjectSprites.mapId else { return [] }
+        let npcX = PalletTownObjectSprites.npcX
+        let npcY = PalletTownObjectSprites.npcY
+        let playerX = PalletTownObjectSprites.playerX
+        let playerY = PalletTownObjectSprites.playerY
+        var sprites: [MapQuadInstance] = []
+        if isTreeTop(x: npcX, y: npcY, on: map) {
+            sprites.append(
+                objectSprite(
+                    x: npcX,
+                    y: npcY,
+                    anchorX: 0.55,
+                    anchorY: 0.40,
+                    halfX: 0.22,
+                    halfY: 0.28,
+                    red: 0.20,
+                    green: 0.45,
+                    blue: 0.86
+                )
+            )
+        }
+        if map.contains(x: playerX, y: playerY), !isTreeTop(x: playerX, y: playerY, on: map) {
+            sprites.append(
+                objectSprite(
+                    x: playerX,
+                    y: playerY,
+                    anchorX: 0.50,
+                    anchorY: 0.55,
+                    halfX: 0.18,
+                    halfY: 0.32,
+                    red: 0.90,
+                    green: 0.18,
+                    blue: 0.16
+                )
+            )
+        }
+        return sprites
+    }
+
     /// Four outline quads. Empty when the cell is outside the map.
     /// Changing this list does not touch `MapMetatileGrid`.
     public static func selection(x: Int, y: Int, on map: MapDocument) -> [MapQuadInstance] {
@@ -189,6 +286,35 @@ public enum MapDrawListBuilder {
             blue: 0.25,
             alpha: 1,
             depth: MapDepth.selection
+        )
+    }
+
+    private static func isTreeTop(x: Int, y: Int, on map: MapDocument) -> Bool {
+        guard let cell = map.cell(x: x, y: y) else { return false }
+        return GeneralTilesetTreeTops.treeTopMetatileIds.contains(cell.metatileId)
+    }
+
+    private static func objectSprite(
+        x: Int,
+        y: Int,
+        anchorX: Float,
+        anchorY: Float,
+        halfX: Float,
+        halfY: Float,
+        red: Float,
+        green: Float,
+        blue: Float
+    ) -> MapQuadInstance {
+        MapQuadInstance(
+            centerX: Float(x) + anchorX,
+            centerY: Float(y) + anchorY,
+            halfX: halfX,
+            halfY: halfY,
+            red: red,
+            green: green,
+            blue: blue,
+            alpha: 1,
+            depth: MapDepth.sprite
         )
     }
 

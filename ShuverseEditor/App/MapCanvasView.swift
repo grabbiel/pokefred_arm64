@@ -24,9 +24,13 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     private var needsFit = false
 
     private var grid: MapMetatileGrid?
+    private var canopy: [MapCanopyInstance] = []
+    private var sprites: [MapQuadInstance] = []
     private var markers: [MapQuadInstance] = []
     private var selectionInstances: [MapQuadInstance] = []
     private var gridDirty = RingSlotDirty()
+    private var canopyDirty = RingSlotDirty()
+    private var spriteDirty = RingSlotDirty()
     private var markerDirty = RingSlotDirty()
     private var selectionDirty = RingSlotDirty()
 
@@ -35,6 +39,11 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     private let inflightFrames = DispatchSemaphore(value: FrameRing.slotCount)
     private var frameRing = FrameRing()
     private var metalError: String?
+    private var animBase: GBATileset?
+    private var animGraphics: GBATileset?
+    private var animPlayer: TilesetAnimPlayer?
+    private var animTimer: Timer?
+    private var displayedAnimFrame: Int?
 
     private var dragStart: NSPoint?
     private var dragCamera: MapCamera?
@@ -56,13 +65,19 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         selection = nil
         if let map {
             grid = MapMetatileGrid.make(map: map)
+            canopy = MapDrawListBuilder.canopy(on: map)
+            sprites = MapDrawListBuilder.sprites(on: map)
             markers = MapDrawListBuilder.markers(on: map)
         } else {
             grid = nil
+            canopy = []
+            sprites = []
             markers = []
         }
         selectionInstances = []
         gridDirty.markAllDirty()
+        canopyDirty.markAllDirty()
+        spriteDirty.markAllDirty()
         markerDirty.markAllDirty()
         selectionDirty.markAllDirty()
         bindTileset(for: map)
@@ -81,6 +96,15 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         text += String(format: "%.1f pt/metatile", camera.pointsPerMetatile)
         if let selection {
             text += "   cell \(selection.x), \(selection.y)"
+        }
+        if !canopy.isEmpty {
+            text += "   canopy \(canopy.count)"
+        }
+        if !sprites.isEmpty {
+            text += "   sprites \(sprites.count)"
+        }
+        if let displayedAnimFrame {
+            text += "   water frame \(displayedAnimFrame)"
         }
         return text
     }
@@ -131,10 +155,14 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             encoder: encoder,
             slot: slot,
             grid: grid,
+            canopy: canopy,
+            sprites: sprites,
             markers: markers,
             selection: selectionInstances,
             uniforms: makeUniforms(),
             gridDirty: &gridDirty,
+            canopyDirty: &canopyDirty,
+            spriteDirty: &spriteDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
@@ -261,26 +289,34 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         publishCamera()
     }
 
+    deinit {
+        animTimer?.invalidate()
+    }
+
     private func bindTileset(for map: MapDocument?) {
         guard let map else {
             gpu.setTexturedGround(false)
+            stopTilesetAnimation()
             return
         }
         guard GBATileset.supports(map.tilesets) else {
             gpu.setTexturedGround(false)
             gpu.setStatusNote("No 4bpp tileset is loaded for this map.")
+            stopTilesetAnimation()
             publishRendererNote()
             return
         }
         if !gpu.tilesetReady {
             guard let device else {
                 gpu.failTileset("Metal device is missing, so the shared tileset texture was not created.")
+                stopTilesetAnimation()
                 publishRendererNote()
                 assertionFailure(gpu.note ?? "Shared tileset upload failed.")
                 return
             }
             guard let directory = MapFileLocator.palletTownTilesetDirectory() else {
                 gpu.failTileset("Pallet Town 4bpp tileset files were not found.")
+                stopTilesetAnimation()
                 publishRendererNote()
                 assertionFailure(gpu.note ?? "Shared tileset upload failed.")
                 return
@@ -288,20 +324,117 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             do {
                 let graphics = try GBATileset.loadPalletTown(from: directory)
                 if !gpu.uploadTileset(graphics, device: device) {
+                    stopTilesetAnimation()
                     publishRendererNote()
                     assertionFailure(gpu.note ?? "Shared tileset upload failed.")
                     return
                 }
+                animBase = graphics
             } catch {
                 gpu.failTileset(error.localizedDescription)
+                stopTilesetAnimation()
                 publishRendererNote()
                 assertionFailure(gpu.note ?? "Shared tileset upload failed.")
                 return
             }
         }
+        let started = startTilesetAnimation()
         gpu.setTexturedGround(true)
-        gpu.setStatusNote(nil)
+        if started {
+            gpu.setStatusNote(nil)
+        }
         publishRendererNote()
+    }
+
+    /// 60 Hz stand-in for the pret tileset counter. The view stays paused;
+    /// `needsDisplay` is set only when a frame is copied into the atlas.
+    private func startTilesetAnimation() -> Bool {
+        guard animPlayer == nil else { return true }
+        guard let base = animBase else {
+            gpu.failTileset("Pallet Town tileset animation has no CPU atlas.")
+            reportTilesetFailure()
+            return false
+        }
+        guard let table = PalletTownTilesetAnim.makeTable(from: base), let clip = table.clips.first else {
+            gpu.setStatusNote("Tileset animation stub was not applied.")
+            publishRendererNote()
+            return false
+        }
+        var graphics = base
+        guard let span = TilesetAnimBlit.apply(
+            clip,
+            frame: 0,
+            to: &graphics.indices,
+            atlasWidth: graphics.atlasWidth,
+            atlasHeight: graphics.atlasHeight
+        ) else {
+            gpu.failTileset("Could not copy tileset animation frame 0 onto tile \(clip.baseTileId).")
+            reportTilesetFailure()
+            return false
+        }
+        guard gpu.rewriteIndexRows(graphics.indices, spans: [span]) else {
+            reportTilesetFailure()
+            return false
+        }
+        animGraphics = graphics
+        animPlayer = TilesetAnimPlayer(table: table)
+        displayedAnimFrame = 0
+        let timer = Timer(timeInterval: 1.0 / Double(PalletTownTilesetAnim.ticksPerSecond), repeats: true) { [weak self] _ in
+            self?.tickTilesetAnimation()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animTimer = timer
+        onCameraChange?(statusLine())
+        return true
+    }
+
+    private func stopTilesetAnimation() {
+        animTimer?.invalidate()
+        animTimer = nil
+        animPlayer = nil
+        animGraphics = nil
+        let wasShowing = displayedAnimFrame != nil
+        displayedAnimFrame = nil
+        if wasShowing {
+            onCameraChange?(statusLine())
+        }
+    }
+
+    private func tickTilesetAnimation() {
+        guard var player = animPlayer, var graphics = animGraphics else { return }
+        let steps = player.advance()
+        animPlayer = player
+        guard !steps.isEmpty else { return }
+        var spans: [AtlasRowSpan] = []
+        spans.reserveCapacity(steps.count)
+        for step in steps {
+            guard player.table.clips.indices.contains(step.clipIndex) else { continue }
+            let clip = player.table.clips[step.clipIndex]
+            guard let span = TilesetAnimBlit.apply(
+                clip,
+                frame: step.frameIndex,
+                to: &graphics.indices,
+                atlasWidth: graphics.atlasWidth,
+                atlasHeight: graphics.atlasHeight
+            ) else {
+                gpu.failTileset("Could not copy tileset animation frame \(step.frameIndex) onto tile \(clip.baseTileId).")
+                stopTilesetAnimation()
+                reportTilesetFailure()
+                return
+            }
+            spans.append(span)
+            if clip.baseTileId == PalletTownTilesetAnim.waterBaseTileId {
+                displayedAnimFrame = step.frameIndex
+            }
+        }
+        animGraphics = graphics
+        guard gpu.rewriteIndexRows(graphics.indices, spans: spans) else {
+            stopTilesetAnimation()
+            reportTilesetFailure()
+            return
+        }
+        needsDisplay = true
+        onCameraChange?(statusLine())
     }
 
     private func configure() {
@@ -338,6 +471,11 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         commandQueue = device.makeCommandQueue()
         gpu.prepare(device: device, colorFormat: colorPixelFormat, depthFormat: depthStencilPixelFormat)
         publishRendererNote()
+    }
+
+    private func reportTilesetFailure() {
+        publishRendererNote()
+        assertionFailure(gpu.note ?? "Shared tileset upload failed.")
     }
 
     private func publishRendererNote() {

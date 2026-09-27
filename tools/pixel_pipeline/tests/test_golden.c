@@ -105,7 +105,14 @@ static int check_origin(void)
         "# pret/pokefirered fixtures. One record per line: <basename> <source path>\n"
         "tanoby_ruins_tiles.png data/tilesets/secondary/tanoby_ruins/tiles.png\n"
         "game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png\n"
-        "pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png\n";
+        "pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png\n"
+        "mart_tiles.png data/tilesets/secondary/mart/tiles.png\n"
+        "school_tiles.png data/tilesets/secondary/school/tiles.png\n"
+        "underground_path_tiles.png data/tilesets/secondary/underground_path/tiles.png\n"
+        "generic_building_1_tiles.png data/tilesets/secondary/generic_building_1/tiles.png\n"
+        "bike_shop_tiles.png data/tilesets/secondary/bike_shop/tiles.png\n"
+        "saffron_gym_tiles.png data/tilesets/secondary/saffron_gym/tiles.png\n"
+        "viridian_gym_tiles.png data/tilesets/secondary/viridian_gym/tiles.png\n";
     uint8_t *origin = NULL;
     size_t origin_n = 0;
 
@@ -239,10 +246,24 @@ static int check_tanoby_details(void)
     return 0;
 }
 
+/* These sheets keep PLTE order (indexed, 16 unique colors, no tRNS).
+ * Each PLTE is the same 16-gray ramp, read from the fixture PNG:
+ * index 0 is 255, index 1 is 238, index 15 is 0. */
+static void expect_gray_ramp_spots(const pp_indexed *indexed, const pp_gba *gba)
+{
+    EXPECT(indexed->rgb[0][0] == 255 && indexed->rgb[0][1] == 255 && indexed->rgb[0][2] == 255);
+    EXPECT(indexed->rgb[1][0] == 238 && indexed->rgb[1][1] == 238 && indexed->rgb[1][2] == 238);
+    EXPECT(indexed->rgb[15][0] == 0 && indexed->rgb[15][1] == 0 && indexed->rgb[15][2] == 0);
+    EXPECT(gba->palette[0] == 0x7FFFu);
+    EXPECT(gba->palette[1] == 0x77BDu);
+    EXPECT(gba->palette[15] == 0x0000u);
+}
+
 static int check_game_corner_details(void)
 {
     pp_image img;
     pp_indexed indexed;
+    pp_gba gba;
 
     REQUIRE(pp_png_decode_file("testdata/game_corner_tiles.png", &img) == 0);
     EXPECT(img.indexed == 1);
@@ -250,6 +271,9 @@ static int check_game_corner_details(void)
     EXPECT(img.has_trns == 0);
     REQUIRE(pp_quantize(&img, &indexed) == 0);
     EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
     pp_indexed_free(&indexed);
     pp_image_free(&img);
     return 0;
@@ -259,6 +283,7 @@ static int check_pallet_town_details(void)
 {
     pp_image img;
     pp_indexed indexed;
+    pp_gba gba;
 
     REQUIRE(pp_png_decode_file("testdata/pallet_town_tiles.png", &img) == 0);
     EXPECT(img.indexed == 1);
@@ -266,6 +291,152 @@ static int check_pallet_town_details(void)
     EXPECT(img.has_trns == 0);
     REQUIRE(pp_quantize(&img, &indexed) == 0);
     EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_mart_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/mart_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_school_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/school_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_underground_path_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/underground_path_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_generic_building_1_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/generic_building_1_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_bike_shop_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/bike_shop_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    /* PLTE is the same 16-gray ramp as the other sheets: 0=255, 1=238, 15=0. */
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_saffron_gym_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/saffron_gym_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    /* PLTE is the same 16-gray ramp as the other sheets: 0=255, 1=238, 15=0. */
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_viridian_gym_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/viridian_gym_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    /* PLTE is the same 16-gray ramp as the other sheets: 0=255, 1=238, 15=0. */
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
     pp_indexed_free(&indexed);
     pp_image_free(&img);
     return 0;
@@ -286,6 +457,38 @@ int main(void)
     REQUIRE(check_fixture("pallet_town", "testdata/pallet_town_tiles.png", "tests/golden/pallet_town_tiles.4bpp",
                           "tests/golden/pallet_town_tiles.pal", "build/pallet_town_tiles.4bpp",
                           "build/pallet_town_tiles.pal", 128, 40, 2560u) == 0);
+    REQUIRE(check_mart_details() == 0);
+    REQUIRE(check_fixture("mart", "testdata/mart_tiles.png", "tests/golden/mart_tiles.4bpp",
+                          "tests/golden/mart_tiles.pal", "build/mart_tiles.4bpp",
+                          "build/mart_tiles.pal", 128, 24, 1536u) == 0);
+    REQUIRE(check_school_details() == 0);
+    REQUIRE(check_fixture("school", "testdata/school_tiles.png", "tests/golden/school_tiles.4bpp",
+                          "tests/golden/school_tiles.pal", "build/school_tiles.4bpp",
+                          "build/school_tiles.pal", 128, 32, 2048u) == 0);
+    REQUIRE(check_underground_path_details() == 0);
+    REQUIRE(check_fixture("underground_path", "testdata/underground_path_tiles.png",
+                          "tests/golden/underground_path_tiles.4bpp", "tests/golden/underground_path_tiles.pal",
+                          "build/underground_path_tiles.4bpp", "build/underground_path_tiles.pal", 128, 32, 2048u) == 0);
+    REQUIRE(check_generic_building_1_details() == 0);
+    REQUIRE(check_fixture("generic_building_1", "testdata/generic_building_1_tiles.png",
+                          "tests/golden/generic_building_1_tiles.4bpp", "tests/golden/generic_building_1_tiles.pal",
+                          "build/generic_building_1_tiles.4bpp", "build/generic_building_1_tiles.pal", 128, 32,
+                          2048u) == 0);
+    REQUIRE(check_bike_shop_details() == 0);
+    REQUIRE(check_fixture("bike_shop", "testdata/bike_shop_tiles.png",
+                          "tests/golden/bike_shop_tiles.4bpp", "tests/golden/bike_shop_tiles.pal",
+                          "build/bike_shop_tiles.4bpp", "build/bike_shop_tiles.pal", 128, 32,
+                          2048u) == 0);
+    REQUIRE(check_saffron_gym_details() == 0);
+    REQUIRE(check_fixture("saffron_gym", "testdata/saffron_gym_tiles.png",
+                          "tests/golden/saffron_gym_tiles.4bpp", "tests/golden/saffron_gym_tiles.pal",
+                          "build/saffron_gym_tiles.4bpp", "build/saffron_gym_tiles.pal", 128, 48,
+                          3072u) == 0);
+    REQUIRE(check_viridian_gym_details() == 0);
+    REQUIRE(check_fixture("viridian_gym", "testdata/viridian_gym_tiles.png",
+                          "tests/golden/viridian_gym_tiles.4bpp", "tests/golden/viridian_gym_tiles.pal",
+                          "build/viridian_gym_tiles.4bpp", "build/viridian_gym_tiles.pal", 128, 48,
+                          3072u) == 0);
 
     EXPECT(pp_convert_png_to_gba(NULL, "build/x.4bpp", "build/x.pal", NULL) == 1);
     EXPECT(pp_convert_png_to_gba("testdata/missing.png", "build/x.4bpp", "build/x.pal", NULL) == 1);

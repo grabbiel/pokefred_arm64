@@ -61,7 +61,7 @@ Opening a connection or warp loads (or focuses) another `MapDocument` into `maps
 
 ## GPU upload
 
-The canvas uploads `MapMetatileGrid`: one `UInt32` per cell, low 16 bits `MapCell.raw`. It does not expand each cell into six vertices when the selection changes. Markers and the selection outline are small quad-instance lists. Pallet Town's ground fragment samples the shared 4bpp atlas and RGB555 palette instead of a per-id color. See [metal_gpu.md](metal_gpu.md).
+The canvas uploads `MapMetatileGrid`: one `UInt32` per cell, low 16 bits `MapCell.raw`. It does not expand each cell into six vertices when the selection changes. Markers and the selection outline are small quad-instance lists. Pallet Town object sprites are a separate shared-ring list at depth 0.20, in front of the canopy leaves (0.40) and the ground (0.70). Pallet Town's ground fragment samples the shared 4bpp atlas and RGB555 palette instead of a per-id color. Water tiles 416–419 are rewritten in that atlas by `PalletTownTilesetAnim` (stub frames, pret's tile id and 16-tick phase). See [metal_gpu.md](metal_gpu.md).
 
 ## Non-goals for v1
 - No live C rewrite yet.

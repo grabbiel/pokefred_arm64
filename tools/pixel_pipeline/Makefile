@@ -57,6 +57,27 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/pallet_town_tiles.png $(BUILD)/cli_pallet_town.4bpp $(BUILD)/cli_pallet_town.pal
 	cmp $(BUILD)/cli_pallet_town.4bpp tests/golden/pallet_town_tiles.4bpp
 	cmp $(BUILD)/cli_pallet_town.pal tests/golden/pallet_town_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/mart_tiles.png $(BUILD)/cli_mart.4bpp $(BUILD)/cli_mart.pal
+	cmp $(BUILD)/cli_mart.4bpp tests/golden/mart_tiles.4bpp
+	cmp $(BUILD)/cli_mart.pal tests/golden/mart_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/school_tiles.png $(BUILD)/cli_school.4bpp $(BUILD)/cli_school.pal
+	cmp $(BUILD)/cli_school.4bpp tests/golden/school_tiles.4bpp
+	cmp $(BUILD)/cli_school.pal tests/golden/school_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/underground_path_tiles.png $(BUILD)/cli_underground_path.4bpp $(BUILD)/cli_underground_path.pal
+	cmp $(BUILD)/cli_underground_path.4bpp tests/golden/underground_path_tiles.4bpp
+	cmp $(BUILD)/cli_underground_path.pal tests/golden/underground_path_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/generic_building_1_tiles.png $(BUILD)/cli_generic_building_1.4bpp $(BUILD)/cli_generic_building_1.pal
+	cmp $(BUILD)/cli_generic_building_1.4bpp tests/golden/generic_building_1_tiles.4bpp
+	cmp $(BUILD)/cli_generic_building_1.pal tests/golden/generic_building_1_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/bike_shop_tiles.png $(BUILD)/cli_bike_shop.4bpp $(BUILD)/cli_bike_shop.pal
+	cmp $(BUILD)/cli_bike_shop.4bpp tests/golden/bike_shop_tiles.4bpp
+	cmp $(BUILD)/cli_bike_shop.pal tests/golden/bike_shop_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/saffron_gym_tiles.png $(BUILD)/cli_saffron_gym.4bpp $(BUILD)/cli_saffron_gym.pal
+	cmp $(BUILD)/cli_saffron_gym.4bpp tests/golden/saffron_gym_tiles.4bpp
+	cmp $(BUILD)/cli_saffron_gym.pal tests/golden/saffron_gym_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/viridian_gym_tiles.png $(BUILD)/cli_viridian_gym.4bpp $(BUILD)/cli_viridian_gym.pal
+	cmp $(BUILD)/cli_viridian_gym.4bpp tests/golden/viridian_gym_tiles.4bpp
+	cmp $(BUILD)/cli_viridian_gym.pal tests/golden/viridian_gym_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@

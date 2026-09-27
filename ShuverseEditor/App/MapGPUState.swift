@@ -65,6 +65,7 @@ final class MapGPUState {
     private(set) var metalError: String?
 
     private var tilePipeline: MTLRenderPipelineState?
+    private var canopyPipeline: MTLRenderPipelineState?
     private var spritePipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var tileCorners: MTLBuffer?
@@ -72,9 +73,17 @@ final class MapGPUState {
     private var uniformRing: SharedRingBuffer?
     private var gridRing: SharedRingBuffer?
     private var markerRing: SharedRingBuffer?
+    private var canopyRing: SharedRingBuffer?
+    private var spriteRing: SharedRingBuffer?
     private var selectionRing: SharedRingBuffer?
-    private var indexAtlas: MTLTexture?
-    private var indexAtlasBuffer: MTLBuffer?
+    private var indexRing: SharedRingBuffer?
+    private var indexTextures: [MTLTexture] = []
+    private var cpuIndices: [UInt8] = []
+    private var animSpans: [AtlasRowSpan] = []
+    private var animDirty = RingSlotDirty(allDirty: false)
+    private var atlasWidth = 0
+    private var atlasHeight = 0
+    private var atlasRowBytes = 0
     private var paletteRGB555: MTLBuffer?
     private var metatileTable: MTLBuffer?
     private var uploadFailed = false
@@ -96,6 +105,16 @@ final class MapGPUState {
                 colorFormat: colorFormat,
                 depthFormat: depthFormat,
                 label: "map-tiles"
+            )
+            canopyPipeline = try makePipeline(
+                device: device,
+                library: library,
+                vertexName: MapShaders.canopyVertexFunction,
+                fragmentName: MapShaders.canopyFragmentFunction,
+                vertexDescriptor: MapShaders.canopyVertexDescriptor(),
+                colorFormat: colorFormat,
+                depthFormat: depthFormat,
+                label: "map-canopy"
             )
             spritePipeline = try makePipeline(
                 device: device,
@@ -124,6 +143,16 @@ final class MapGPUState {
                     bytes: MapGPULayout.initialMarkerInstances * MapGPULayout.quadInstanceBytes,
                     label: "markers"
                   ),
+                  let canopyRing = SharedRingBuffer(
+                    device: device,
+                    bytes: MapGPULayout.initialCanopyInstances * MapGPULayout.canopyInstanceBytes,
+                    label: "canopy"
+                  ),
+                  let spriteRing = SharedRingBuffer(
+                    device: device,
+                    bytes: MapGPULayout.initialSpriteInstances * MapGPULayout.quadInstanceBytes,
+                    label: "sprites"
+                  ),
                   let selectionRing = SharedRingBuffer(
                     device: device,
                     bytes: MapGPULayout.selectionInstances * MapGPULayout.quadInstanceBytes,
@@ -136,6 +165,8 @@ final class MapGPUState {
             self.uniformRing = uniformRing
             self.gridRing = gridRing
             self.markerRing = markerRing
+            self.canopyRing = canopyRing
+            self.spriteRing = spriteRing
             self.selectionRing = selectionRing
             metalError = nil
         } catch {
@@ -147,21 +178,28 @@ final class MapGPUState {
         encoder: MTLRenderCommandEncoder,
         slot: Int,
         grid: MapMetatileGrid?,
+        canopy: [MapCanopyInstance],
+        sprites: [MapQuadInstance],
         markers: [MapQuadInstance],
         selection: [MapQuadInstance],
         uniforms: MapGPUUniforms,
         gridDirty: inout RingSlotDirty,
+        canopyDirty: inout RingSlotDirty,
+        spriteDirty: inout RingSlotDirty,
         markerDirty: inout RingSlotDirty,
         selectionDirty: inout RingSlotDirty
     ) -> Bool {
         guard metalError == nil,
               let tilePipeline,
+              let canopyPipeline,
               let spritePipeline,
               let depthState,
               let tileCorners,
               let spriteCorners,
               let uniformRing,
               let gridRing,
+              let canopyRing,
+              let spriteRing,
               let markerRing,
               let selectionRing else {
             return true
@@ -171,28 +209,61 @@ final class MapGPUState {
         upload(
             slot: slot,
             grid: grid,
+            canopy: canopy,
+            sprites: sprites,
             markers: markers,
             selection: selection,
             uniforms: uniforms,
             gridRing: gridRing,
+            canopyRing: canopyRing,
+            spriteRing: spriteRing,
             markerRing: markerRing,
             selectionRing: selectionRing,
             uniformRing: uniformRing,
             gridDirty: &gridDirty,
+            canopyDirty: &canopyDirty,
+            spriteDirty: &spriteDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
         guard !uploadFailed else { return false }
+        guard flushTilesetAnimation(slot: slot) else { return false }
 
         let cells = grid?.cellCount ?? 0
         let canDraw = cells > 0 && uniforms.viewportWidth > 1 && uniforms.viewportHeight > 1 && uniforms.pointsPerMetatile > 0
-        if canDraw && texturedGround, let indexAtlas, let paletteRGB555, let metatileTable {
+        let textured = canDraw && texturedGround && indexTextures.indices.contains(slot)
+        // Sprites, then canopy, then ground. Ground is later and opaque.
+        // Less-than depth keeps sprites (0.20) in front of the leaves (0.40)
+        // and both in front of ground (0.70). One encoder, so color stays on-chip.
+        if textured, !sprites.isEmpty {
+            encoder.setRenderPipelineState(spritePipeline)
+            encoder.setDepthStencilState(depthState)
+            encoder.setVertexBuffer(spriteCorners, offset: 0, index: 0)
+            encoder.setVertexBuffer(spriteRing.buffers[slot], offset: 0, index: 1)
+            encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 2)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: sprites.count)
+        }
+
+        if textured, !canopy.isEmpty, let paletteRGB555, let metatileTable {
+            encoder.setRenderPipelineState(canopyPipeline)
+            encoder.setDepthStencilState(depthState)
+            encoder.setVertexBuffer(tileCorners, offset: 0, index: 0)
+            encoder.setVertexBuffer(canopyRing.buffers[slot], offset: 0, index: 1)
+            encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 2)
+            encoder.setVertexBuffer(gridRing.buffers[slot], offset: 0, index: 3)
+            encoder.setFragmentTexture(indexTextures[slot], index: 0)
+            encoder.setFragmentBuffer(paletteRGB555, offset: 0, index: 0)
+            encoder.setFragmentBuffer(metatileTable, offset: 0, index: 1)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: canopy.count)
+        }
+
+        if textured, let paletteRGB555, let metatileTable {
             encoder.setRenderPipelineState(tilePipeline)
             encoder.setDepthStencilState(depthState)
             encoder.setVertexBuffer(tileCorners, offset: 0, index: 0)
             encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 1)
             encoder.setVertexBuffer(gridRing.buffers[slot], offset: 0, index: 2)
-            encoder.setFragmentTexture(indexAtlas, index: 0)
+            encoder.setFragmentTexture(indexTextures[slot], index: 0)
             encoder.setFragmentBuffer(paletteRGB555, offset: 0, index: 0)
             encoder.setFragmentBuffer(metatileTable, offset: 0, index: 1)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: cells)
@@ -219,14 +290,20 @@ final class MapGPUState {
     private func upload(
         slot: Int,
         grid: MapMetatileGrid?,
+        canopy: [MapCanopyInstance],
+        sprites: [MapQuadInstance],
         markers: [MapQuadInstance],
         selection: [MapQuadInstance],
         uniforms: MapGPUUniforms,
         gridRing: SharedRingBuffer,
+        canopyRing: SharedRingBuffer,
+        spriteRing: SharedRingBuffer,
         markerRing: SharedRingBuffer,
         selectionRing: SharedRingBuffer,
         uniformRing: SharedRingBuffer,
         gridDirty: inout RingSlotDirty,
+        canopyDirty: inout RingSlotDirty,
+        spriteDirty: inout RingSlotDirty,
         markerDirty: inout RingSlotDirty,
         selectionDirty: inout RingSlotDirty
     ) {
@@ -237,6 +314,20 @@ final class MapGPUState {
             ring: gridRing,
             dirty: &gridDirty,
             minimumBytes: MapGPULayout.gridWordBytes
+        )
+        writeIfDirty(
+            canopy,
+            slot: slot,
+            ring: canopyRing,
+            dirty: &canopyDirty,
+            minimumBytes: MapGPULayout.canopyInstanceBytes
+        )
+        writeIfDirty(
+            sprites,
+            slot: slot,
+            ring: spriteRing,
+            dirty: &spriteDirty,
+            minimumBytes: MapGPULayout.quadInstanceBytes
         )
         writeIfDirty(
             markers,
@@ -305,9 +396,11 @@ final class MapGPUState {
         statusNote = "Shared tileset upload failed. \(detail)"
     }
 
-    /// Copies the index atlas into a `MTLStorageModeShared` buffer and views it
-    /// as an r8Uint texture. Palette and metatile entries are shared buffers.
-    /// Row stride follows `minimumLinearTextureAlignment`. There is no managed blit.
+    /// Copies the index atlas into a triple `MTLStorageModeShared` ring and views
+    /// each slot as an r8Uint texture. Palette and metatile entries stay single
+    /// shared buffers. Row stride follows `minimumLinearTextureAlignment`.
+    /// There is no managed blit. Animation later rewrites affected rows in the
+    /// free slot via `rewriteIndexRows`.
     func uploadTileset(_ graphics: GBATileset, device: MTLDevice) -> Bool {
         guard graphics.atlasWidth == GBATileset.atlasWidth,
               graphics.atlasHeight == GBATileset.atlasHeight,
@@ -329,23 +422,29 @@ final class MapGPUState {
         let alignment = max(device.minimumLinearTextureAlignment(for: .r8Uint), 1)
         let rowBytes = ((graphics.atlasWidth + alignment - 1) / alignment) * alignment
         let length = rowBytes * graphics.atlasHeight
-        guard let buffer = device.makeBuffer(length: length, options: [.storageModeShared]) else {
+        // One shared atlas per in-flight frame. Animation rewrites rows only on
+        // the slot the GPU has finished reading.
+        guard let ring = SharedRingBuffer(device: device, bytes: length, label: "tileset-indices") else {
             failTileset("Could not allocate a \(length)-byte shared index buffer.")
             return false
         }
-        buffer.label = "tileset-indices"
-        buffer.contents().initializeMemory(as: UInt8.self, repeating: 0, count: length)
-        let copied = graphics.indices.withUnsafeBytes { raw -> Bool in
-            guard let base = raw.baseAddress else { return false }
-            for row in 0..<graphics.atlasHeight {
-                let destination = buffer.contents().advanced(by: row * rowBytes)
-                destination.copyMemory(from: base.advanced(by: row * graphics.atlasWidth), byteCount: graphics.atlasWidth)
+        let fullSpan = AtlasRowSpan(firstRow: 0, rowCount: graphics.atlasHeight)
+        for buffer in ring.buffers {
+            buffer.contents().initializeMemory(as: UInt8.self, repeating: 0, count: length)
+            let copied = graphics.indices.withUnsafeBytes { raw in
+                IndexAtlasRows.copy(
+                    indices: raw,
+                    atlasWidth: graphics.atlasWidth,
+                    atlasHeight: graphics.atlasHeight,
+                    spans: [fullSpan],
+                    destination: buffer.contents(),
+                    rowBytes: rowBytes
+                )
             }
-            return true
-        }
-        guard copied else {
-            failTileset("Could not read the index atlas bytes.")
-            return false
+            guard copied else {
+                failTileset("Could not read the index atlas bytes.")
+                return false
+            }
         }
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -356,13 +455,18 @@ final class MapGPUState {
         )
         descriptor.storageMode = .shared
         descriptor.usage = [.shaderRead]
-        guard let texture = buffer.makeTexture(descriptor: descriptor, offset: 0, bytesPerRow: rowBytes) else {
-            failTileset(
-                "Could not create a shared r8Uint texture view (\(graphics.atlasWidth)×\(graphics.atlasHeight), row \(rowBytes), alignment \(alignment))."
-            )
-            return false
+        var textures: [MTLTexture] = []
+        textures.reserveCapacity(ring.buffers.count)
+        for buffer in ring.buffers {
+            guard let texture = buffer.makeTexture(descriptor: descriptor, offset: 0, bytesPerRow: rowBytes) else {
+                failTileset(
+                    "Could not create a shared r8Uint texture view (\(graphics.atlasWidth)×\(graphics.atlasHeight), row \(rowBytes), alignment \(alignment))."
+                )
+                return false
+            }
+            texture.label = "tileset-indices"
+            textures.append(texture)
         }
-        texture.label = "tileset-indices"
 
         let paletteBytes = graphics.paletteRGB555.count * MemoryLayout<UInt16>.stride
         guard let palette = graphics.paletteRGB555.withUnsafeBytes({ raw -> MTLBuffer? in
@@ -384,13 +488,71 @@ final class MapGPUState {
         }
         table.label = "metatile-entries"
 
-        indexAtlasBuffer = buffer
-        indexAtlas = texture
+        indexRing = ring
+        indexTextures = textures
+        cpuIndices = Array(graphics.indices)
+        animSpans = []
+        animDirty = RingSlotDirty(allDirty: false)
+        atlasWidth = graphics.atlasWidth
+        atlasHeight = graphics.atlasHeight
+        atlasRowBytes = rowBytes
         paletteRGB555 = palette
         metatileTable = table
         tilesetReady = true
         texturedGround = true
         statusNote = nil
+        return true
+    }
+
+    /// Keeps a CPU copy of the index atlas and marks every ring slot dirty.
+    /// `encode` memcpy's `spans` into the slot the GPU is not reading.
+    func rewriteIndexRows(_ indices: [UInt8], spans: [AtlasRowSpan]) -> Bool {
+        guard tilesetReady, atlasWidth > 0, atlasHeight > 0, indexRing != nil else {
+            failTileset("Index atlas is not ready for animation.")
+            return false
+        }
+        guard indices.count == atlasWidth * atlasHeight else {
+            failTileset("Index atlas is \(indices.count) bytes; expected \(atlasWidth * atlasHeight).")
+            return false
+        }
+        guard !spans.isEmpty else { return true }
+        for span in spans {
+            guard span.firstRow >= 0, span.rowCount > 0, span.firstRow + span.rowCount <= atlasHeight else {
+                failTileset("Animation rows \(span.firstRow)..<\(span.firstRow + span.rowCount) do not fit the index atlas.")
+                return false
+            }
+        }
+        cpuIndices = Array(indices)
+        animSpans = spans
+        animDirty.markAllDirty()
+        return true
+    }
+
+    /// Copies the staged animation rows into one shared atlas slot.
+    private func flushTilesetAnimation(slot: Int) -> Bool {
+        guard tilesetReady, animDirty.isDirty(slot) else { return true }
+        guard let ring = indexRing, ring.buffers.indices.contains(slot), atlasRowBytes >= atlasWidth else {
+            failTileset("Shared index atlas ring is missing a slot.")
+            uploadFailed = true
+            return false
+        }
+        let buffer = ring.buffers[slot]
+        let copied = cpuIndices.withUnsafeBytes { raw in
+            IndexAtlasRows.copy(
+                indices: raw,
+                atlasWidth: atlasWidth,
+                atlasHeight: atlasHeight,
+                spans: animSpans,
+                destination: buffer.contents(),
+                rowBytes: atlasRowBytes
+            )
+        }
+        guard copied else {
+            failTileset("Could not copy tileset animation rows into the shared index atlas.")
+            uploadFailed = true
+            return false
+        }
+        animDirty.markClean(slot)
         return true
     }
 

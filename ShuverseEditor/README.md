@@ -57,7 +57,7 @@ swift run --arch arm64 ShuverseEditor Samples/PalletTown.json
 
 File → Open Map JSON…, File → Open Pallet Town Sample, or drop a `.json` file on the window. Opening another map adds it to the workspace and focuses it. Tileset symbols are deduped in `EditorDocument.sharedTilesets`.
 
-`MapDocument` Codable matches the parser file: `dimensions.width_metatiles`, `blockdata.metatile_ids`, and `blockdata.map_attributes` (bits 0–9 id, bits 10–15 attribute). `EditorDocument` Codable is the workspace (`decompRoot`, `maps`, `activeMapId`, `sharedTilesets`, `dirtyMaps`).
+`MapDocument` Codable matches the parser file: `dimensions.width_metatiles`, `blockdata.metatile_ids`, and `blockdata.map_attributes` (bits 0–9 id, bits 10–15 attribute). `EditorDocument` Codable is the workspace (`decompRoot`, `maps`, `activeMapId`, `sharedTilesets`, `dirtyMaps`, `brushMetatileId`).
 
 ## Docks
 
@@ -66,7 +66,7 @@ A transparent `MTKView` covers the window and draws four Dear ImGui panels: **Ma
 - Map List shows open maps (the sample name is enough when only Pallet Town is loaded) and can open the sample or a JSON file.
 - Inspector shows the same cell and event text as before (metatile id, attribute, packed `u16`, object / warp / trigger / sign).
 - Status shows zoom, pan, the selected cell, and the renderer note.
-- Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to read its metatile id. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
+- Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to store that id on `EditorDocument.brushMetatileId`. The click does not paint. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
 
 Drag a tab or splitter to rearrange docks for the session. The layout is not written to an ini file.
 
@@ -80,3 +80,5 @@ GPU notes (shared grid, triple-buffering, depth, tile-shader overlays): [docs/me
 - Scroll wheel, pinch, or ⌘-scroll to zoom toward the pointer. Menu or `+` / `-` zoom about the center. `0` or `f` fits the map. Arrow keys pan.
 - Marker colors: white object, gold warp, cyan trigger, orange sign. The gold outline is the selection.
 - Pallet Town ground pixels come from `Samples/tilesets/pallet_town/` (primary + secondary `.4bpp`, 32-byte RGB555 `.pal` banks, pret `metatiles.bin`). Formats match `tools/pixel_pipeline/CONTRACT.md`. Rebuild with `Scripts/bake_pallet_town_tiles.py`. `MetatileColor` is not uploaded.
+- Pallet Town water (tiles 416–419) cycles a stub animation on that same atlas. The status line shows `water frame N`. The frames are not a second tileset; see [docs/metal_gpu.md](../docs/metal_gpu.md).
+- General-tileset tree tops (metatiles 10, 11, 12, 14, 15, 19) draw their top layer a second time at depth 0.40, before the ground pass, on any map that uses those ids. On the Pallet Town sample that is the south-edge wide trees. Pallet Town only, two object sprites at depth 0.20 sit in front of those leaves: a blue NPC on the south-west tree and a red player on open ground at (8, 15). The status line shows `canopy N` and `sprites N`. Water animation is unchanged.

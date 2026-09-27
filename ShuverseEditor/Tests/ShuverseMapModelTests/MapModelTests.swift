@@ -34,12 +34,17 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.halfX), MapGPULayout.instanceHalfOffset)
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.red), MapGPULayout.instanceColorOffset)
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.depth), MapGPULayout.instanceDepthOffset)
+        XCTAssertEqual(MemoryLayout<MapCanopyInstance>.size, MapGPULayout.canopyInstanceBytes)
+        XCTAssertEqual(MemoryLayout<MapCanopyInstance>.stride, MapGPULayout.canopyInstanceBytes)
+        XCTAssertEqual(MemoryLayout.offset(of: \MapCanopyInstance.cellIndex), MapGPULayout.canopyCellOffset)
+        XCTAssertEqual(MemoryLayout.offset(of: \MapCanopyInstance.depth), MapGPULayout.canopyDepthOffset)
 
         XCTAssertGreaterThan(MapDepth.clear, MapDepth.ground)
-        XCTAssertGreaterThan(MapDepth.ground, MapDepth.sprite)
-        XCTAssertGreaterThan(MapDepth.sprite, MapDepth.canopy)
+        XCTAssertGreaterThan(MapDepth.ground, MapDepth.canopy)
         XCTAssertGreaterThan(MapDepth.canopy, MapDepth.marker)
-        XCTAssertGreaterThan(MapDepth.marker, MapDepth.selection)
+        XCTAssertGreaterThan(MapDepth.marker, MapDepth.sprite)
+        XCTAssertGreaterThan(MapDepth.sprite, MapDepth.selection)
+        XCTAssertEqual(MapDepth.sprite, 0.20, accuracy: 0.0001)
     }
 
     func testPalletTownIs24By20() throws {
@@ -113,6 +118,25 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(decoded.decompRoot, "/tmp/pokefirered")
         XCTAssertEqual(decoded.activeMap?.cells, document.activeMap?.cells)
         XCTAssertEqual(decoded.sharedTilesets, document.sharedTilesets)
+        XCTAssertNil(decoded.brushMetatileId)
+    }
+
+    func testBrushSelectStoresMetatileWithoutPainting() throws {
+        var document = EditorDocument(decompRoot: "/tmp/pokefirered")
+        try document.importParserMap(Data(contentsOf: palletTownURL()))
+        let cells = document.activeMap?.cells
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertFalse(document.selectBrush(metatileId: -1))
+        XCTAssertFalse(document.selectBrush(metatileId: GBATileset.metatileCount))
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertTrue(document.selectBrush(metatileId: 678))
+        XCTAssertEqual(document.brushMetatileId, 678)
+        XCTAssertEqual(document.activeMap?.cells, cells)
+        XCTAssertTrue(document.dirtyMaps.isEmpty)
+
+        let decoded = try JSONDecoder().decode(EditorDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(decoded.brushMetatileId, 678)
+        XCTAssertEqual(decoded.activeMap?.cells, cells)
     }
 
     func testRejectsInconsistentBlockdata() {
@@ -197,6 +221,95 @@ final class MapModelTests: XCTestCase {
         )
         XCTAssertFalse(selectionCapacity.prepare(byteCount: selected.count * MapGPULayout.quadInstanceBytes))
         XCTAssertTrue(gridCapacity.prepare(byteCount: 5000 * MapGPULayout.gridWordBytes))
+
+        let canopy = MapDrawListBuilder.canopy(on: map)
+        let treeCells = map.cells.enumerated().compactMap { index, cell -> Int? in
+            GeneralTilesetTreeTops.treeTopMetatileIds.contains(cell.metatileId) ? index : nil
+        }
+        XCTAssertEqual(canopy.map { Int($0.cellIndex) }, treeCells)
+        XCTAssertEqual(canopy.count, 8)
+        XCTAssertTrue(canopy.allSatisfy { $0.depth == MapDepth.canopy })
+        XCTAssertEqual(Set(treeCells.map { map.cells[$0].metatileId }), Set<UInt16>([14, 15]))
+        var canopyCapacity = RingCapacity(
+            bytes: MapGPULayout.initialCanopyInstances * MapGPULayout.canopyInstanceBytes
+        )
+        XCTAssertFalse(canopyCapacity.prepare(byteCount: canopy.count * MapGPULayout.canopyInstanceBytes))
+
+        let sprites = MapDrawListBuilder.sprites(on: map)
+        XCTAssertEqual(sprites.count, 2)
+        XCTAssertTrue(sprites.allSatisfy { $0.depth == MapDepth.sprite })
+        XCTAssertLessThan(MapDepth.sprite, MapDepth.canopy)
+        var spriteCapacity = RingCapacity(
+            bytes: MapGPULayout.initialSpriteInstances * MapGPULayout.quadInstanceBytes
+        )
+        XCTAssertFalse(spriteCapacity.prepare(byteCount: sprites.count * MapGPULayout.quadInstanceBytes))
+        let overlapsCanopy = sprites.filter { sprite in
+            canopy.contains { instance in
+                let index = Int(instance.cellIndex)
+                return spriteOverlaps(sprite, cellX: index % map.size.width, cellY: index / map.size.width)
+            }
+        }
+        XCTAssertEqual(overlapsCanopy.count, 1)
+        let player = try XCTUnwrap(sprites.first { sprite in !overlapsCanopy.contains(sprite) })
+        XCTAssertFalse(canopy.contains { instance in
+            let index = Int(instance.cellIndex)
+            return spriteOverlaps(player, cellX: index % map.size.width, cellY: index / map.size.width)
+        })
+        XCTAssertEqual(player.red, 0.90, accuracy: 0.0001)
+        XCTAssertEqual(player.green, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(player.centerX, 8.5, accuracy: 0.0001)
+        XCTAssertEqual(player.centerY, 15.55, accuracy: 0.0001)
+        let npc = try XCTUnwrap(overlapsCanopy.first)
+        XCTAssertEqual(npc.blue, 0.86, accuracy: 0.0001)
+        XCTAssertGreaterThan(npc.centerY - npc.halfY, Float(19))
+        XCTAssertLessThan(npc.centerY + npc.halfY, Float(20))
+        XCTAssertLessThan(npc.centerY - npc.halfY, Float(19.5))
+    }
+
+    func testCanopyIdsAreGeneralTilesetNotPalletLayout() {
+        XCTAssertEqual(
+            GeneralTilesetTreeTops.treeTopMetatileIds,
+            Set<UInt16>([0x00A, 0x00B, 0x00C, 0x00E, 0x00F, 0x013])
+        )
+
+        let empty = MapDocument(
+            mapId: "MAP_X",
+            name: "X",
+            layoutId: "LAYOUT_X",
+            music: "M",
+            weather: "W",
+            mapType: "T",
+            tilesets: TilesetRef(primary: "gTileset_General", secondary: "gTileset_PalletTown"),
+            size: MapSize(width: 2, height: 1),
+            cells: [
+                MapCell(metatileId: 14, mapAttribute: 0),
+                MapCell(metatileId: 662, mapAttribute: 0),
+            ]
+        )
+        let canopy = MapDrawListBuilder.canopy(on: empty)
+        XCTAssertEqual(canopy.map(\.cellIndex), [UInt32(0)])
+        XCTAssertEqual(canopy[0].depth, MapDepth.canopy)
+        XCTAssertTrue(MapDrawListBuilder.sprites(on: empty).isEmpty)
+
+        // Same cells the Pallet sample uses for its object sprites. A different map
+        // still gets canopy from the general-tileset ids, and no object sprites.
+        let width = 9
+        let height = 20
+        var cells = Array(repeating: MapCell(metatileId: 1, mapAttribute: 0), count: width * height)
+        cells[19 * width + 2] = MapCell(metatileId: 14, mapAttribute: 0)
+        let route = MapDocument(
+            mapId: "MAP_ROUTE1",
+            name: "Route 1",
+            layoutId: "LAYOUT_ROUTE1",
+            music: "M",
+            weather: "W",
+            mapType: "T",
+            tilesets: TilesetRef(primary: "gTileset_General", secondary: "gTileset_PalletTown"),
+            size: MapSize(width: width, height: height),
+            cells: cells
+        )
+        XCTAssertEqual(MapDrawListBuilder.canopy(on: route).map(\.cellIndex), [UInt32(19 * width + 2)])
+        XCTAssertTrue(MapDrawListBuilder.sprites(on: route).isEmpty)
     }
 
     func testStackedMarkersAndTileOverlayMath() {
@@ -304,6 +417,9 @@ final class MapModelTests: XCTestCase {
         XCTAssertTrue(shaders.contains("[[stage_in]]"))
         XCTAssertTrue(shaders.contains("vertex Varying map_vertex"))
         XCTAssertTrue(shaders.contains("vertex Varying map_sprite_vertex"))
+        XCTAssertTrue(shaders.contains("vertex Varying map_canopy_vertex"))
+        XCTAssertTrue(shaders.contains("fragment float4 map_canopy_fragment"))
+        XCTAssertTrue(shaders.contains("discard_fragment()"))
         XCTAssertTrue(shaders.contains("fragment float4 map_fragment(Varying in [[stage_in]])"))
         XCTAssertTrue(shaders.contains("kernel void map_tile_overlay"))
         XCTAssertTrue(shaders.contains("imageblock<TilePixel>"))
@@ -338,7 +454,32 @@ final class MapModelTests: XCTestCase {
         XCTAssertFalse(gpu.contains("MTLTileRenderPipelineDescriptor"))
         XCTAssertFalse(gpu.contains("tileFunction"))
         XCTAssertFalse(canvas.contains("dispatchThreadsPerTile"))
+        XCTAssertFalse(canvas.contains("tileFunction"))
+        XCTAssertFalse(canvas.contains("MTLTileRenderPipelineDescriptor"))
         XCTAssertFalse(gpu.contains("GLFW"))
+        XCTAssertTrue(gpu.contains("rewriteIndexRows"))
+        XCTAssertTrue(gpu.contains("IndexAtlasRows.copy"))
+        XCTAssertTrue(gpu.contains("map-canopy"))
+        XCTAssertTrue(gpu.contains("label: \"canopy\""))
+        XCTAssertTrue(gpu.contains("label: \"sprites\""))
+        XCTAssertFalse(gpu.contains("depth-sprites"))
+        let canopyDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(canopyPipeline)"))
+        let groundDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(tilePipeline)"))
+        XCTAssertLessThan(canopyDraw.lowerBound, groundDraw.lowerBound)
+        let spriteDraws = ranges(of: "setRenderPipelineState(spritePipeline)", in: gpu)
+        XCTAssertEqual(spriteDraws.count, 2)
+        XCTAssertLessThan(spriteDraws[0].lowerBound, canopyDraw.lowerBound)
+        XCTAssertGreaterThan(spriteDraws[1].lowerBound, groundDraw.lowerBound)
+        XCTAssertTrue(gpu.contains("animDirty"))
+        XCTAssertTrue(canvas.contains("isPaused = true"))
+        XCTAssertTrue(canvas.contains("PalletTownTilesetAnim"))
+        XCTAssertTrue(canvas.contains("rewriteIndexRows"))
+        XCTAssertTrue(canvas.contains("water frame"))
+        XCTAssertTrue(canvas.contains("sprites "))
+        let overlay = try String(contentsOf: root.appendingPathComponent("App/ImGuiOverlayView.swift"), encoding: .utf8)
+        XCTAssertTrue(overlay.contains("isPaused = false"))
+        XCTAssertTrue(overlay.contains("ImGuiDockShell.build"))
+        XCTAssertTrue(overlay.contains("preferredFramesPerSecond = 60"))
     }
 
     func testRGB555AndNibbleOrderMatchPixelPipeline() {
@@ -488,6 +629,175 @@ final class MapModelTests: XCTestCase {
         XCTAssertFalse(GBATileset.supports(TilesetRef(primary: "gTileset_General", secondary: "gTileset_ViridianCity")))
     }
 
+    func testPalletWaterAnimFollowsPretCounter() {
+        let clip = TilesetAnimClip(
+            baseTileId: PalletTownTilesetAnim.waterBaseTileId,
+            tileCount: PalletTownTilesetAnim.waterTileCount,
+            frames: (0..<PalletTownTilesetAnim.waterFrameCount).map { _ in
+                TilesetAnimFrame(indices: [UInt8](repeating: 1, count: PalletTownTilesetAnim.waterTileCount * 64))
+            },
+            period: PalletTownTilesetAnim.waterPeriod,
+            phase: PalletTownTilesetAnim.waterPhase
+        )
+        var player = TilesetAnimPlayer(
+            table: TilesetAnimTable(counterMax: PalletTownTilesetAnim.counterMax, clips: [clip])
+        )
+        var counters: [Int] = []
+        var frames: [Int] = []
+        for _ in 0..<PalletTownTilesetAnim.counterMax {
+            let steps = player.advance()
+            XCTAssertLessThanOrEqual(steps.count, 1)
+            if let step = steps.first {
+                counters.append(player.counter)
+                frames.append(step.frameIndex)
+            }
+        }
+        XCTAssertEqual(player.counter, 0)
+        XCTAssertEqual(counters, (0..<40).map { 1 + PalletTownTilesetAnim.waterPeriod * $0 })
+        XCTAssertEqual(frames, (0..<40).map { $0 % PalletTownTilesetAnim.waterFrameCount })
+        XCTAssertFalse(counters.contains(0))
+        XCTAssertEqual(PalletTownTilesetAnim.waterTileCount, 4)
+        XCTAssertLessThan(PalletTownTilesetAnim.waterTileCount, PalletTownTilesetAnim.pretWaterDMATileCount)
+        XCTAssertEqual(PalletTownTilesetAnim.ticksPerSecond, 60)
+    }
+
+    func testPalletWaterStubRewritesAtlasRows() throws {
+        let directory = try XCTUnwrap(TilesetLocator.find(startingAt: [packageRoot()]))
+        let tileset = try GBATileset.loadPalletTown(from: directory)
+        let table = try XCTUnwrap(PalletTownTilesetAnim.makeTable(from: tileset))
+        let clip = try XCTUnwrap(table.clips.first)
+        XCTAssertEqual(clip.baseTileId, 416)
+        XCTAssertEqual(clip.tileCount, 4)
+        XCTAssertEqual(clip.frames.count, 8)
+        XCTAssertEqual(clip.period, 16)
+        XCTAssertEqual(clip.phase, 1)
+        for id in [291, 298, 299, 300, 721, 722] {
+            let bottom = (0..<4).map { slot in
+                GBAScreenEntry(raw: tileset.metatileEntries[id * 8 + slot]).tileId
+            }
+            XCTAssertEqual(bottom, [416, 417, 418, 419] as [UInt16])
+        }
+
+        var frame0 = tileset
+        let span0 = try XCTUnwrap(TilesetAnimBlit.apply(
+            clip,
+            frame: 0,
+            to: &frame0.indices,
+            atlasWidth: frame0.atlasWidth,
+            atlasHeight: frame0.atlasHeight
+        ))
+        XCTAssertEqual(span0, AtlasRowSpan(firstRow: 208, rowCount: 8))
+        XCTAssertEqual(frame0.indices, tileset.indices)
+
+        var animated = tileset
+        let span1 = try XCTUnwrap(TilesetAnimBlit.apply(
+            clip,
+            frame: 1,
+            to: &animated.indices,
+            atlasWidth: animated.atlasWidth,
+            atlasHeight: animated.atlasHeight
+        ))
+        XCTAssertEqual(span1, span0)
+        XCTAssertNotEqual(animated.indices, tileset.indices)
+        for tile in 0..<4 {
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    XCTAssertEqual(
+                        atlasIndex(animated.indices, tile: 416 + tile, x: x, y: y),
+                        atlasIndex(tileset.indices, tile: 416 + tile, x: x, y: (y + 1) % 8)
+                    )
+                }
+            }
+        }
+        for tile in [415, 420, 508, 511] {
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    XCTAssertEqual(
+                        atlasIndex(animated.indices, tile: tile, x: x, y: y),
+                        atlasIndex(tileset.indices, tile: tile, x: x, y: y)
+                    )
+                }
+            }
+        }
+        let before = tileset.sample(metatileId: 299, x: 0, y: 2)
+        let after = animated.sample(metatileId: 299, x: 0, y: 2)
+        XCTAssertEqual(before.a, 1, accuracy: 0.0001)
+        XCTAssertEqual(after.a, 1, accuracy: 0.0001)
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(animated.sample(metatileId: 28, x: 5, y: 0), tileset.sample(metatileId: 28, x: 5, y: 0))
+        XCTAssertEqual(animated.sample(metatileId: 4, x: 1, y: 1), tileset.sample(metatileId: 4, x: 1, y: 1))
+
+        var unchanged = tileset.indices
+        XCTAssertNil(TilesetAnimBlit.apply(
+            clip,
+            frame: 99,
+            to: &unchanged,
+            atlasWidth: tileset.atlasWidth,
+            atlasHeight: tileset.atlasHeight
+        ))
+        XCTAssertEqual(unchanged, tileset.indices)
+
+        var player = TilesetAnimPlayer(table: table)
+        var stepped = tileset
+        var applied = 0
+        while applied < 2 {
+            let steps = player.advance()
+            for step in steps {
+                _ = TilesetAnimBlit.apply(
+                    table.clips[step.clipIndex],
+                    frame: step.frameIndex,
+                    to: &stepped.indices,
+                    atlasWidth: stepped.atlasWidth,
+                    atlasHeight: stepped.atlasHeight
+                )
+                applied += 1
+            }
+        }
+        XCTAssertEqual(player.counter, 17)
+        XCTAssertEqual(stepped.indices, animated.indices)
+        XCTAssertNotEqual(stepped.sample(metatileId: 299, x: 0, y: 2), tileset.sample(metatileId: 299, x: 0, y: 2))
+    }
+
+    func testIndexAtlasRowCopyLeavesPadding() throws {
+        let width = 4
+        let height = 6
+        let indices = (0..<width * height).map { UInt8($0) }
+        let span = AtlasRowSpan(firstRow: 2, rowCount: 2)
+        let rowBytes = 8
+        let copied = try XCTUnwrap(IndexAtlasRows.copying(
+            indices: indices,
+            atlasWidth: width,
+            atlasHeight: height,
+            spans: [span],
+            rowBytes: rowBytes
+        ))
+        XCTAssertEqual(copied.count, rowBytes * height)
+        for row in 0..<height {
+            for column in 0..<rowBytes {
+                let value = copied[row * rowBytes + column]
+                if row >= 2 && row < 4 && column < width {
+                    XCTAssertEqual(value, indices[row * width + column])
+                } else {
+                    XCTAssertEqual(value, 0xFF)
+                }
+            }
+        }
+        XCTAssertNil(IndexAtlasRows.copying(
+            indices: indices,
+            atlasWidth: width,
+            atlasHeight: height,
+            spans: [AtlasRowSpan(firstRow: 5, rowCount: 2)],
+            rowBytes: rowBytes
+        ))
+        XCTAssertNil(IndexAtlasRows.copying(
+            indices: indices,
+            atlasWidth: width,
+            atlasHeight: height,
+            spans: [span],
+            rowBytes: width - 1
+        ))
+    }
+
     func testCameraHitTestPanAndZoom() throws {
         let map = try loadPalletTown()
         let camera = MapCamera(originX: 0, originY: 0, pointsPerMetatile: 16)
@@ -515,6 +825,32 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(fitted.pointsPerMetatile, 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originX, -40 / 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originY, 0, accuracy: 0.001)
+    }
+
+    private func spriteOverlaps(_ sprite: MapQuadInstance, cellX: Int, cellY: Int) -> Bool {
+        let x0 = sprite.centerX - sprite.halfX
+        let x1 = sprite.centerX + sprite.halfX
+        let y0 = sprite.centerY - sprite.halfY
+        let y1 = sprite.centerY + sprite.halfY
+        let left = Float(cellX)
+        let top = Float(cellY)
+        return x0 < left + 1 && x1 > left && y0 < top + 1 && y1 > top
+    }
+
+    private func ranges(of needle: String, in text: String) -> [Range<String.Index>] {
+        var found: [Range<String.Index>] = []
+        var search = text.startIndex..<text.endIndex
+        while let range = text.range(of: needle, range: search) {
+            found.append(range)
+            search = range.upperBound..<text.endIndex
+        }
+        return found
+    }
+
+    private func atlasIndex(_ indices: [UInt8], tile: Int, x: Int, y: Int) -> UInt8 {
+        let column = tile % GBATileset.atlasTilesPerRow
+        let row = tile / GBATileset.atlasTilesPerRow
+        return indices[(row * 8 + y) * GBATileset.atlasWidth + column * 8 + x]
     }
 
     private func relativeFiles(in directory: URL) throws -> [String] {

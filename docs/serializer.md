@@ -97,3 +97,9 @@ The PalletTown + `PalletTown_ProfessorOaksLab` byte-identity `--write` gate (par
 - Empty indoor `connections` stay `null` when pret stored null (not `[]`),
   so round-trip stays byte-identical.
 - Refuse git-dirty targets unless `--force`.
+- `understanding_pipeline.py` never passes `--write`. Its `serialize_ok` is
+  packed `map.bin` byte-identity only (`validate_document` + `pack_map_bin`
+  against the decomp file). That count is not a `map.json` rewrite and not
+  `slim_compare_events`. `--scripts-corridor` refreshes script-coverage
+  presets into gitignored `parsed/` and does not write the decomp. Real
+  `--write` stays fail-closed and Serializer-owned.
