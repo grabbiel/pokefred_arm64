@@ -1,16 +1,7 @@
 import AppKit
 import Metal
 import MetalKit
-import simd
 import ShuverseMapModel
-
-/// GPU uniforms. Layout matches `Uniforms` in `MapShaders` (24 bytes).
-struct MapUniforms {
-    var origin: SIMD2<Float>
-    var viewport: SIMD2<Float>
-    var pointsPerMetatile: Float
-    var pad: Float
-}
 
 final class MapCanvasView: MTKView, MTKViewDelegate {
     var onInspect: ((CellInspection?) -> Void)?
@@ -18,15 +9,31 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     var onRendererNote: ((String?) -> Void)?
     var onDropURL: ((URL) -> Void)?
 
+    /// Imageblock overlay bits (`MapOverlayFlags`). Default 0 keeps selection
+    /// as depth-tested quads. Non-zero dispatches `map_tile_overlay`.
+    var overlayFlags: UInt32 = 0 {
+        didSet {
+            guard overlayFlags != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     private var map: MapDocument?
     private var selection: (x: Int, y: Int)?
     private var camera = MapCamera(originX: 0, originY: 0, pointsPerMetatile: 16)
     private var needsFit = false
 
+    private var grid: MapMetatileGrid?
+    private var markers: [MapQuadInstance] = []
+    private var selectionInstances: [MapQuadInstance] = []
+    private var gridDirty = RingSlotDirty()
+    private var markerDirty = RingSlotDirty()
+    private var selectionDirty = RingSlotDirty()
+
     private var commandQueue: MTLCommandQueue?
-    private var pipeline: MTLRenderPipelineState?
-    private var vertexBuffer: MTLBuffer?
-    private var vertexCount = 0
+    private let gpu = MapGPUState()
+    private let inflightFrames = DispatchSemaphore(value: FrameRing.slotCount)
+    private var frameRing = FrameRing()
     private var metalError: String?
 
     private var dragStart: NSPoint?
@@ -47,7 +54,17 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     func setMap(_ map: MapDocument?, fit: Bool) {
         self.map = map
         selection = nil
-        rebuildMesh()
+        if let map {
+            grid = MapMetatileGrid.make(map: map)
+            markers = MapDrawListBuilder.markers(on: map)
+        } else {
+            grid = nil
+            markers = []
+        }
+        selectionInstances = []
+        gridDirty.markAllDirty()
+        markerDirty.markAllDirty()
+        selectionDirty.markAllDirty()
         if fit {
             needsFit = true
             fitIfPossible()
@@ -93,26 +110,39 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         guard let drawable = currentDrawable,
               let descriptor = currentRenderPassDescriptor,
               let commandQueue,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+              let commandBuffer = commandQueue.makeCommandBuffer() else {
             return
         }
-
-        if let pipeline, let vertexBuffer, vertexCount > 0, bounds.width > 1, bounds.height > 1, camera.pointsPerMetatile > 0 {
-            var uniforms = MapUniforms(
-                origin: SIMD2(camera.originX, camera.originY),
-                viewport: SIMD2(Float(bounds.width), Float(bounds.height)),
-                pointsPerMetatile: camera.pointsPerMetatile,
-                pad: 0
-            )
-            encoder.setRenderPipelineState(pipeline)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<MapUniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertexCount)
+        preparePass(descriptor)
+        inflightFrames.wait()
+        var committed = false
+        defer {
+            if !committed {
+                inflightFrames.signal()
+            }
         }
-
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            return
+        }
+        let slot = frameRing.nextSlot()
+        commandBuffer.label = "map-frame"
+        gpu.encode(
+            encoder: encoder,
+            slot: slot,
+            grid: grid,
+            markers: markers,
+            selection: selectionInstances,
+            uniforms: makeUniforms(),
+            gridDirty: &gridDirty,
+            markerDirty: &markerDirty,
+            selectionDirty: &selectionDirty
+        )
         encoder.endEncoding()
         commandBuffer.present(drawable)
+        commandBuffer.addCompletedHandler { [inflightFrames] _ in
+            inflightFrames.signal()
+        }
+        committed = true
         commandBuffer.commit()
     }
 
@@ -227,12 +257,27 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
 
     private func configure() {
         colorPixelFormat = .bgra8Unorm
+        depthStencilPixelFormat = .depth32Float
         clearColor = MTLClearColor(red: 0.07, green: 0.08, blue: 0.10, alpha: 1)
+        clearDepth = Double(MapDepth.clear)
         isPaused = true
         enableSetNeedsDisplay = true
         delegate = self
         registerForDraggedTypes([.fileURL])
         prepareMetal()
+    }
+
+    private func preparePass(_ descriptor: MTLRenderPassDescriptor) {
+        if let color = descriptor.colorAttachments[0] {
+            color.loadAction = .clear
+            color.storeAction = .store
+            color.clearColor = clearColor
+        }
+        // Depth is only used inside this pass. TBDR can drop it instead of
+        // writing the attachment back to memory.
+        descriptor.depthAttachment.loadAction = .clear
+        descriptor.depthAttachment.storeAction = .dontCare
+        descriptor.depthAttachment.clearDepth = Double(MapDepth.clear)
     }
 
     private func prepareMetal() {
@@ -242,49 +287,34 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             return
         }
         commandQueue = device.makeCommandQueue()
-        do {
-            let library = try device.makeLibrary(source: MapShaders.source, options: nil)
-            guard let vertex = library.makeFunction(name: "map_vertex"),
-                  let fragment = library.makeFunction(name: "map_fragment") else {
-                metalError = "Metal shader is missing map_vertex or map_fragment."
-                onRendererNote?(metalError)
-                return
-            }
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = vertex
-            descriptor.fragmentFunction = fragment
-            descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
-            descriptor.colorAttachments[0].isBlendingEnabled = true
-            descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-            descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-            descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
-            descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
-            metalError = nil
-            onRendererNote?(nil)
-        } catch {
-            metalError = error.localizedDescription
-            onRendererNote?(metalError)
-        }
+        gpu.prepare(device: device, colorFormat: colorPixelFormat, depthFormat: depthStencilPixelFormat)
+        metalError = gpu.note
+        onRendererNote?(metalError)
     }
 
-    private func rebuildMesh() {
-        guard let map, let device else {
-            vertexBuffer = nil
-            vertexCount = 0
-            return
+    private func makeUniforms() -> MapGPUUniforms {
+        let scale: Float
+        if bounds.width > 1, drawableSize.width > 0 {
+            scale = Float(drawableSize.width / bounds.width)
+        } else {
+            scale = 1
         }
-        let list = MapDrawListBuilder.make(map: map, selectedX: selection?.x, selectedY: selection?.y)
-        vertexCount = list.vertices.count
-        guard vertexCount > 0 else {
-            vertexBuffer = nil
-            return
-        }
-        let byteCount = vertexCount * MemoryLayout<MeshVertex>.stride
-        list.vertices.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            vertexBuffer = device.makeBuffer(bytes: base, length: byteCount, options: .storageModeShared)
-        }
+        let tile = gpu.tileSize
+        return MapGPUUniforms(
+            originX: camera.originX,
+            originY: camera.originY,
+            viewportWidth: Float(bounds.width),
+            viewportHeight: Float(bounds.height),
+            pointsPerMetatile: camera.pointsPerMetatile,
+            pixelScale: scale,
+            gridWidth: UInt32(max(grid?.width ?? 0, 0)),
+            gridHeight: UInt32(max(grid?.height ?? 0, 0)),
+            selectedX: Int32(selection?.x ?? -1),
+            selectedY: Int32(selection?.y ?? -1),
+            overlayFlags: overlayFlags,
+            tileWidth: UInt32(tile.width),
+            tileHeight: UInt32(tile.height)
+        )
     }
 
     private func inspect(at viewPoint: NSPoint) {
@@ -296,12 +326,14 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         )
         if let hit {
             selection = (hit.x, hit.y)
+            selectionInstances = MapDrawListBuilder.selection(x: hit.x, y: hit.y, on: map)
             onInspect?(map.inspection(x: hit.x, y: hit.y))
         } else {
             selection = nil
+            selectionInstances = []
             onInspect?(nil)
         }
-        rebuildMesh()
+        selectionDirty.markAllDirty()
         publishCamera()
     }
 

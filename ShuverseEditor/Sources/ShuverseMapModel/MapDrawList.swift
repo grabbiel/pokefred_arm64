@@ -1,33 +1,5 @@
 import Foundation
 
-/// Tightly packed `x, y, r, g, b, a` floats. The Metal shader reads this as
-/// `packed_float2` + `packed_float4` (24 bytes, no padding).
-public struct MeshVertex: Equatable {
-    public var x: Float
-    public var y: Float
-    public var r: Float
-    public var g: Float
-    public var b: Float
-    public var a: Float
-
-    public init(x: Float, y: Float, r: Float, g: Float, b: Float, a: Float) {
-        self.x = x
-        self.y = y
-        self.r = r
-        self.g = g
-        self.b = b
-        self.a = a
-    }
-}
-
-public struct MapDrawList: Equatable {
-    public var vertices: [MeshVertex]
-
-    public init(vertices: [MeshVertex]) {
-        self.vertices = vertices
-    }
-}
-
 public enum MapGeometry {
     public static let tileInset: Float = 0.06
     public static let selectionThickness: Float = 0.07
@@ -39,31 +11,119 @@ public enum MapGeometry {
     }
 }
 
-public enum MapDrawListBuilder {
-    /// Cell quads colored by metatile id, then event markers, then a selection outline.
-    public static func make(map: MapDocument, selectedX: Int?, selectedY: Int?) -> MapDrawList {
-        var vertices: [MeshVertex] = []
-        vertices.reserveCapacity((map.cells.count + 32) * 6)
+/// Depth values written by the canvas. Smaller is closer (`MTLCompareFunction.less`).
+/// Sprite and canopy slots are reserved so later draws can sort against the
+/// same depth-stencil state without a new attachment.
+public enum MapDepth {
+    public static let clear: Float = 1
+    /// Metatile quads.
+    public static let ground: Float = 0.70
+    /// Reserved for NPC / player sprites, in front of the ground.
+    public static let sprite: Float = 0.55
+    /// Reserved for canopy (tree tops), in front of sprites.
+    public static let canopy: Float = 0.40
+    /// Event markers. In front of canopy so editor chrome stays visible.
+    public static let marker: Float = 0.28
+    /// Selection outline. Closest layer drawn in v1.
+    public static let selection: Float = 0.15
+}
 
-        for y in 0..<map.size.height {
-            for x in 0..<map.size.width {
-                let cell = map.cells[y * map.size.width + x]
-                let color = MetatileColor.components(for: cell.metatileId)
-                let rect = MapGeometry.tileRect(x: x, y: y)
-                appendQuad(rect.x0, rect.y0, rect.x1, rect.y1, color: color, to: &vertices)
-            }
-        }
-
-        appendMarkers(map: map, to: &vertices)
-
-        if let selectedX, let selectedY, map.contains(x: selectedX, y: selectedY) {
-            appendSelection(x: selectedX, y: selectedY, to: &vertices)
-        }
-
-        return MapDrawList(vertices: vertices)
+/// One cell of the shared GPU grid. Low 16 bits are `MapCell.raw`
+/// (attribute in bits 10–15, metatile id in bits 0–9).
+public enum MapGridPack {
+    public static func word(for cell: MapCell) -> UInt32 {
+        UInt32(cell.raw)
     }
 
-    private static func appendMarkers(map: MapDocument, to vertices: inout [MeshVertex]) {
+    public static func metatileId(in word: UInt32) -> UInt16 {
+        UInt16(word & 0x3FF)
+    }
+
+    public static func mapAttribute(in word: UInt32) -> UInt8 {
+        UInt8((word >> 10) & 0x3F)
+    }
+}
+
+/// Row-major metatile id/attribute grid. The GPU instances one quad per word
+/// and samples this buffer; the CPU does not expand each cell into 6 vertices.
+public struct MapMetatileGrid: Equatable {
+    public var width: Int
+    public var height: Int
+    public var words: [UInt32]
+
+    public init(width: Int, height: Int, words: [UInt32]) {
+        self.width = width
+        self.height = height
+        self.words = words
+    }
+
+    public var cellCount: Int { words.count }
+
+    public static func make(map: MapDocument) -> MapMetatileGrid {
+        let width = map.size.width
+        let height = map.size.height
+        let count = width * height
+        var words = [UInt32](repeating: 0, count: count)
+        let limit = min(count, map.cells.count)
+        for index in 0..<limit {
+            words[index] = MapGridPack.word(for: map.cells[index])
+        }
+        return MapMetatileGrid(width: width, height: height, words: words)
+    }
+}
+
+/// One instanced quad (marker or selection edge) in metatile space.
+/// 12 floats, 48 bytes: center, half-extent, RGBA, depth, then 3 pads so the
+/// stride matches the sprite vertex descriptor (`float2/float2/float4/float`).
+public struct MapQuadInstance: Equatable {
+    public var centerX: Float
+    public var centerY: Float
+    public var halfX: Float
+    public var halfY: Float
+    public var red: Float
+    public var green: Float
+    public var blue: Float
+    public var alpha: Float
+    public var depth: Float
+    public var pad0: Float
+    public var pad1: Float
+    public var pad2: Float
+
+    public init(
+        centerX: Float,
+        centerY: Float,
+        halfX: Float,
+        halfY: Float,
+        red: Float,
+        green: Float,
+        blue: Float,
+        alpha: Float,
+        depth: Float
+    ) {
+        self.centerX = centerX
+        self.centerY = centerY
+        self.halfX = halfX
+        self.halfY = halfY
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+        self.depth = depth
+        self.pad0 = 0
+        self.pad1 = 0
+        self.pad2 = 0
+    }
+}
+
+public enum MapDrawListBuilder {
+    /// Packed id/attribute words. Selection is not baked in; it is a separate
+    /// quad list (or a later tile-shader overlay) so picking a cell does not
+    /// rebuild the grid.
+    public static func grid(for map: MapDocument) -> MapMetatileGrid {
+        MapMetatileGrid.make(map: map)
+    }
+
+    public static func markers(on map: MapDocument) -> [MapQuadInstance] {
         var kindsByCell: [Int: [MarkerKind]] = [:]
         func add(_ kind: MarkerKind, x: Int, y: Int) {
             guard let index = map.cellIndex(x: x, y: y) else { return }
@@ -74,50 +134,67 @@ public enum MapDrawListBuilder {
         for event in map.coordEvents { add(.coord, x: event.x, y: event.y) }
         for event in map.bgEvents { add(.bg, x: event.x, y: event.y) }
 
+        var instances: [MapQuadInstance] = []
+        instances.reserveCapacity(kindsByCell.count)
         for (index, kinds) in kindsByCell.sorted(by: { $0.key < $1.key }) {
             let x = index % map.size.width
             let y = index / map.size.width
             let slots = markerSlots(count: kinds.count)
+            let half: Float = kinds.count == 1 ? 0.12 : 0.08
             for (kind, slot) in zip(kinds, slots) {
-                let cx = Float(x) + slot.0
-                let cy = Float(y) + slot.1
-                let half: Float = kinds.count == 1 ? 0.12 : 0.08
-                appendQuad(cx - half, cy - half, cx + half, cy + half, color: kind.color, to: &vertices)
+                let color = kind.color
+                instances.append(
+                    MapQuadInstance(
+                        centerX: Float(x) + slot.0,
+                        centerY: Float(y) + slot.1,
+                        halfX: half,
+                        halfY: half,
+                        red: color.r,
+                        green: color.g,
+                        blue: color.b,
+                        alpha: color.a,
+                        depth: MapDepth.marker
+                    )
+                )
             }
         }
+        return instances
+    }
+
+    /// Four outline quads. Empty when the cell is outside the map.
+    /// Changing this list does not touch `MapMetatileGrid`.
+    public static func selection(x: Int, y: Int, on map: MapDocument) -> [MapQuadInstance] {
+        guard map.contains(x: x, y: y) else { return [] }
+        let x0 = Float(x)
+        let y0 = Float(y)
+        let x1 = x0 + 1
+        let y1 = y0 + 1
+        let thickness = MapGeometry.selectionThickness
+        return [
+            rect(x0, y0, x1, y0 + thickness),
+            rect(x0, y1 - thickness, x1, y1),
+            rect(x0, y0 + thickness, x0 + thickness, y1 - thickness),
+            rect(x1 - thickness, y0 + thickness, x1, y1 - thickness),
+        ]
+    }
+
+    private static func rect(_ x0: Float, _ y0: Float, _ x1: Float, _ y1: Float) -> MapQuadInstance {
+        MapQuadInstance(
+            centerX: (x0 + x1) * 0.5,
+            centerY: (y0 + y1) * 0.5,
+            halfX: (x1 - x0) * 0.5,
+            halfY: (y1 - y0) * 0.5,
+            red: 1,
+            green: 0.86,
+            blue: 0.25,
+            alpha: 1,
+            depth: MapDepth.selection
+        )
     }
 
     private static func markerSlots(count: Int) -> [(Float, Float)] {
         if count <= 1 { return [(0.5, 0.5)] }
         return [(0.30, 0.30), (0.70, 0.30), (0.30, 0.70), (0.70, 0.70)]
-    }
-
-    private static func appendSelection(x: Int, y: Int, to vertices: inout [MeshVertex]) {
-        let x0 = Float(x)
-        let y0 = Float(y)
-        let x1 = x0 + 1
-        let y1 = y0 + 1
-        let t = MapGeometry.selectionThickness
-        let color: (r: Float, g: Float, b: Float, a: Float) = (1, 0.86, 0.25, 1)
-        appendQuad(x0, y0, x1, y0 + t, color: color, to: &vertices)
-        appendQuad(x0, y1 - t, x1, y1, color: color, to: &vertices)
-        appendQuad(x0, y0 + t, x0 + t, y1 - t, color: color, to: &vertices)
-        appendQuad(x1 - t, y0 + t, x1, y1 - t, color: color, to: &vertices)
-    }
-
-    private static func appendQuad(
-        _ x0: Float,
-        _ y0: Float,
-        _ x1: Float,
-        _ y1: Float,
-        color: (r: Float, g: Float, b: Float, a: Float),
-        to vertices: inout [MeshVertex]
-    ) {
-        let v00 = MeshVertex(x: x0, y: y0, r: color.r, g: color.g, b: color.b, a: color.a)
-        let v10 = MeshVertex(x: x1, y: y0, r: color.r, g: color.g, b: color.b, a: color.a)
-        let v11 = MeshVertex(x: x1, y: y1, r: color.r, g: color.g, b: color.b, a: color.a)
-        let v01 = MeshVertex(x: x0, y: y1, r: color.r, g: color.g, b: color.b, a: color.a)
-        vertices.append(contentsOf: [v00, v10, v11, v00, v11, v01])
     }
 }
 

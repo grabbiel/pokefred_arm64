@@ -9,6 +9,7 @@ Apple Silicon macOS map editor (Swift, AppKit, Metal). It loads Map Parser JSON 
 There is no GBA C rewrite and no Electron/Rosetta build. The editor refuses to compile for any architecture other than `arm64`.
 
 - Model notes: [docs/map_model.md](docs/map_model.md)
+- Metal canvas (shared grid, rings, depth, TBDR): [docs/metal_gpu.md](docs/metal_gpu.md)
 - Package and run instructions: [ShuverseEditor/README.md](ShuverseEditor/README.md)
 - Sample map: [ShuverseEditor/Samples/PalletTown.json](ShuverseEditor/Samples/PalletTown.json)
 
