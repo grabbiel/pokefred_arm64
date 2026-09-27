@@ -53,3 +53,11 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.DS_Store
