@@ -2,8 +2,8 @@
 import PackageDescription
 
 // The map model is pure Swift so it can be tested off macOS.
-// The AppKit + Metal executable is declared only when the package is
-// evaluated on a Mac, which is also the only place it can compile.
+// The AppKit + Metal executable, including the Dear ImGui dock host, is
+// declared only when the package is evaluated on a Mac.
 var products: [Product] = [
     .library(name: "ShuverseMapModel", targets: ["ShuverseMapModel"]),
 ]
@@ -20,16 +20,29 @@ var targets: [Target] = [
 products.append(
     .executable(name: "ShuverseEditor", targets: ["ShuverseEditor"])
 )
-targets.append(
+targets.append(contentsOf: [
+    .target(
+        name: "CImGuiHost",
+        path: "ImGuiHost",
+        exclude: [
+            "imgui/LICENSE.txt",
+            "imgui/VENDORED.txt",
+        ],
+        publicHeadersPath: "include",
+        cxxSettings: [
+            .headerSearchPath("include"),
+            .headerSearchPath("imgui"),
+        ]
+    ),
     .executableTarget(
         name: "ShuverseEditor",
-        dependencies: ["ShuverseMapModel"],
+        dependencies: ["ShuverseMapModel", "CImGuiHost"],
         path: "App",
         resources: [
             .copy("Resources/PalletTown.json"),
         ]
-    )
-)
+    ),
+])
 let supportedPlatforms: [SupportedPlatform]? = [.macOS(.v13)]
 #else
 let supportedPlatforms: [SupportedPlatform]? = nil
@@ -39,5 +52,6 @@ let package = Package(
     name: "ShuverseEditor",
     platforms: supportedPlatforms,
     products: products,
-    targets: targets
+    targets: targets,
+    cxxLanguageStandard: .cxx17
 )
