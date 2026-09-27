@@ -12,20 +12,59 @@ public enum MapGeometry {
 }
 
 /// Depth values written by the canvas. Smaller is closer (`MTLCompareFunction.less`).
-/// Sprite and canopy slots are reserved so later draws can sort against the
-/// same depth-stencil state without a new attachment.
+/// Canopy and the sprite stub are submitted before ground in the same pass.
+/// The depth test is what keeps them in front of the later ground quads.
 public enum MapDepth {
     public static let clear: Float = 1
-    /// Metatile quads.
+    /// Metatile quads. Both GBA layers, composited.
     public static let ground: Float = 0.70
-    /// Reserved for NPC / player sprites, in front of the ground.
+    /// Pallet Town object stub, in front of the ground and behind canopy.
     public static let sprite: Float = 0.55
-    /// Reserved for canopy (tree tops), in front of sprites.
+    /// Tree-top leaves, in front of the sprite stub.
     public static let canopy: Float = 0.40
     /// Event markers. In front of canopy so editor chrome stays visible.
     public static let marker: Float = 0.28
     /// Selection outline. Closest layer drawn in v1.
     public static let selection: Float = 0.15
+}
+
+/// pret general-tileset tree tops (`METATILE_General_ThinTreeTop_*` and
+/// `METATILE_General_WideTreeTop_*`). These are metatile ids, not Pallet Town
+/// cell coordinates. `canopy(on:)` matches them on any map. The top 2×2 is the
+/// overhanging leaves. The bottom 2×2 stays in the ground pass.
+public enum GeneralTilesetTreeTops {
+    public static let treeTopMetatileIds: Set<UInt16> = [
+        0x00A, // ThinTreeTop_Grass
+        0x00B, // WideTreeTopLeft_Grass
+        0x00C, // WideTreeTopRight_Grass
+        0x00E, // WideTreeTopLeft_Mowed
+        0x00F, // WideTreeTopRight_Mowed
+        0x013, // ThinTreeTop_Mowed
+    ]
+}
+
+/// Pallet Town sample anchors for the red depth-sprite stub.
+/// Valid only when `mapId` is `MAP_PALLET_TOWN`. Not coordinates for other maps.
+private enum PalletTownDepthSpriteSample {
+    static let mapId = "MAP_PALLET_TOWN"
+    /// South-west `METATILE_General_WideTreeTopLeft_Mowed` on the sample map.
+    static let underCanopyX = 2
+    static let underCanopyY = 19
+    /// Town ground below Oak's lab, not a tree top.
+    static let openGroundX = 8
+    static let openGroundY = 15
+}
+
+/// One canopy quad. `cellIndex` selects a word in `MapMetatileGrid`.
+/// 8 bytes: uint cell index, float depth. Matches the canopy vertex descriptor.
+public struct MapCanopyInstance: Equatable {
+    public var cellIndex: UInt32
+    public var depth: Float
+
+    public init(cellIndex: Int, depth: Float = MapDepth.canopy) {
+        self.cellIndex = UInt32(cellIndex)
+        self.depth = depth
+    }
 }
 
 /// One cell of the shared GPU grid. Low 16 bits are `MapCell.raw`
@@ -161,6 +200,40 @@ public enum MapDrawListBuilder {
         return instances
     }
 
+    /// Cells whose metatile id is in `GeneralTilesetTreeTops`. Matched on any
+    /// map; this is not a Pallet Town layout. The GPU draws only that metatile's
+    /// top layer, at `MapDepth.canopy`. Ground is not rebuilt.
+    public static func canopy(on map: MapDocument) -> [MapCanopyInstance] {
+        let count = min(map.cells.count, map.size.cellCount)
+        var instances: [MapCanopyInstance] = []
+        for index in 0..<count {
+            guard GeneralTilesetTreeTops.treeTopMetatileIds.contains(map.cells[index].metatileId) else { continue }
+            instances.append(MapCanopyInstance(cellIndex: index))
+        }
+        return instances
+    }
+
+    /// Two solid quads so the depth order is visible on the Pallet Town sample.
+    /// Anchors are `PalletTownDepthSpriteSample` and apply only for that map id.
+    /// One sits in the leafy corner of the south-west wide tree top.
+    /// One sits on open ground and stays fully in front of that metatile.
+    /// Empty for every other map.
+    public static func depthSprites(on map: MapDocument) -> [MapQuadInstance] {
+        guard map.mapId == PalletTownDepthSpriteSample.mapId else { return [] }
+        let underX = PalletTownDepthSpriteSample.underCanopyX
+        let underY = PalletTownDepthSpriteSample.underCanopyY
+        let openX = PalletTownDepthSpriteSample.openGroundX
+        let openY = PalletTownDepthSpriteSample.openGroundY
+        var sprites: [MapQuadInstance] = []
+        if isTreeTop(x: underX, y: underY, on: map) {
+            sprites.append(depthSprite(x: underX, y: underY, anchorX: 0.62, anchorY: 0.68))
+        }
+        if map.contains(x: openX, y: openY), !isTreeTop(x: openX, y: openY, on: map) {
+            sprites.append(depthSprite(x: openX, y: openY, anchorX: 0.5, anchorY: 0.5))
+        }
+        return sprites
+    }
+
     /// Four outline quads. Empty when the cell is outside the map.
     /// Changing this list does not touch `MapMetatileGrid`.
     public static func selection(x: Int, y: Int, on map: MapDocument) -> [MapQuadInstance] {
@@ -189,6 +262,25 @@ public enum MapDrawListBuilder {
             blue: 0.25,
             alpha: 1,
             depth: MapDepth.selection
+        )
+    }
+
+    private static func isTreeTop(x: Int, y: Int, on map: MapDocument) -> Bool {
+        guard let cell = map.cell(x: x, y: y) else { return false }
+        return GeneralTilesetTreeTops.treeTopMetatileIds.contains(cell.metatileId)
+    }
+
+    private static func depthSprite(x: Int, y: Int, anchorX: Float, anchorY: Float) -> MapQuadInstance {
+        MapQuadInstance(
+            centerX: Float(x) + anchorX,
+            centerY: Float(y) + anchorY,
+            halfX: 0.30,
+            halfY: 0.28,
+            red: 0.90,
+            green: 0.16,
+            blue: 0.20,
+            alpha: 1,
+            depth: MapDepth.sprite
         )
     }
 

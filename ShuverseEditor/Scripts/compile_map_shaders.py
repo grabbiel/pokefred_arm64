@@ -36,6 +36,9 @@ def main() -> int:
         "kernel void map_tile_overlay",
         "imageblock<TilePixel>",
         "fragment float4 map_tile_fragment",
+        "vertex Varying map_canopy_vertex",
+        "fragment float4 map_canopy_fragment",
+        "discard_fragment()",
         "texture2d<uint, access::read>",
     ):
         if needle not in source:

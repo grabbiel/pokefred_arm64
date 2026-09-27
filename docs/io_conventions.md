@@ -9,7 +9,7 @@ Owned by Workspace I/O. Other bots follow this so concurrent Metal / Editor UI /
 | `ShuverseEditor/` | Metal map canvas + Dear ImGui dock shell (arm64) | tracked |
 | `ShuverseEditor/ImGuiHost/` | Vendored ImGui + C host (Editor UI) | tracked |
 | `ShuverseEditor/Samples/` | Parser JSON + baked tileset bits for demos | tracked |
-| `tools/pixel_pipeline/` | GBA 4bpp pixel crunch (CLI + goldens) | tracked |
+| `tools/pixel_pipeline/` | GBA 4bpp pixel crunch (CLI + tanoby, game corner, pallet town, mart, school, underground path, generic building 1, bike shop, and saffron gym goldens) | tracked |
 | `tools/*.py` | Map/script parse + serialize CLIs | track when ready (separate PR OK) |
 | `docs/` | Suite contracts | tracked |
 | `/parsed/` | Generated map JSON cache (repo root) | **gitignore** |
@@ -51,13 +51,15 @@ Before writing a path under this workspace:
 
 | Owner | May write |
 |---|---|
-| AST Parser | `parsed/` (local cache), read decomp |
-| Serializer | decomp map artifacts only after dry-run + user intent |
-| Pixel Pipeline | `tools/pixel_pipeline/` |
-| Metal Render | `ShuverseEditor/` map GPU / shaders / tileset upload (not ImGui host) |
-| Editor UI | `ShuverseEditor/ImGuiHost/`, dock overlay / routing inside `ShuverseEditor/` |
+| AST Parser | `parsed/` local cache only (gitignored). Script presets: Pallet→Pewter corridor (30) plus Cerulean cluster (30) via `--cerulean` / `--script-coverage` (60). No decomp writes. |
+| Serializer | decomp `map.bin` / `border.bin` / `map.json` only with explicit `--write` (dry-run default). One map’s three files roll back as a group. |
+| Pixel Pipeline | `tools/pixel_pipeline/` including checked goldens (tanoby, game corner, pallet town, mart, school, underground path, generic building 1, bike shop, saffron gym) |
+| Metal Render | map GPU path in `ShuverseEditor/` (`MapCanvasView`, `MapGPUState`, `MapShaders`, map tileset upload). Not docks or swatch sheets. |
+| Editor UI | `ShuverseEditor/ImGuiHost/`, dock overlay, and Tileset metatile swatches inside `ShuverseEditor/` |
 | Workspace I/O | locks, root `.gitignore`, workflows, `docs/io_conventions.md`, coordination |
 
-ImGui and the map canvas share the window but use **separate** Metal command queues. Do not merge their buffer ownership or stall either path on disk I/O.
+Script coverage is additive `parsed/<Map>.scripts.json`. `parse_scripts.py` resolves shared labels under `data/scripts/*.inc`, then falls back to Common_* attendants in `data/event_scripts.s`. `understanding_pipeline.py --scripts-corridor` refreshes the 60-map union. Those tools do not commit `parsed/` and do not write the decomp.
+
+ImGui and the map canvas share the window but use **separate** Metal command queues. Tileset swatches stay on the ImGui queue; the map `FrameRing` stays with Metal Render. Do not merge their buffer ownership or stall either path on disk I/O.
 
 Hand results in chat after each batch; clear locks in a `finally` path.

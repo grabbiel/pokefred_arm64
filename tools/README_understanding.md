@@ -15,14 +15,16 @@ Stdlib Python tools. Decomp (`pokefirered`) is **read-only**. Outputs land under
 |------|------|
 | `--corridor` | Slice 1: Pallet → Viridian → Pewter (30) |
 | `--cerulean` | Slice 2: Route3/4 → Mt. Moon → Cerulean → Route24/25 → Route5/6 + N/S Underground Path (30) |
-| `--script-coverage` | Union of both presets (60) |
+| `--vermilion` | Slice 3: Vermilion (+ indoors/Fan Club) → Diglett's Cave → Routes 9–11 → Rock Tunnel / Power Plant → SS Anne key decks (30) |
+| `--script-coverage` | Union of slices 1–3 (90) |
 
 ```bash
 # Requires parsed/<Map>.json already (or run full pipeline first)
 python3 tools/parse_scripts.py --script-coverage
 
 # Or refresh scripts then re-check serialize dry-run without rewriting map JSON:
-python3 tools/understanding_pipeline.py --skip-parse --scripts-corridor
+python3 tools/understanding_pipeline.py --skip-parse --scripts-coverage
+# (--scripts-corridor remains a deprecated alias for --scripts-coverage)
 ```
 
 `parse_scripts.py` never mutates map JSON schema. Summaries use label heuristics + cheap body-command hints (`trainerbattle_`, `giveitem`, `pokemart`, …).
