@@ -205,8 +205,13 @@ def build_status(
         "script_slice": script_slice or {},
         "notes": (
             "Serialize always dry-run (no decomp writes). "
+            "serialize_ok = packed map.bin byte-identity vs decomp disk only "
+            "(validate_document + pack_map_bin); does NOT mean map.json events/"
+            "scripts were rewritten or slim_compare_events passed. "
             "Clone OOB allowlist lives in serialize_map.validate_document "
-            "(type=='clone'). Pipeline owns parse + status only."
+            "(type=='clone'). Pipeline owns parse + status only. "
+            "serialize_map --write stays fail-closed (refuses git-dirty targets "
+            "without --force) and is Serializer-owned — this pipeline never passes --write."
         ),
     }
 
@@ -252,15 +257,18 @@ def run_cycle(
         "maps": script_maps,
         "count": len(script_maps),
         "corridor_preset": list(ps.CORRIDOR_MAPS),
+        "cerulean_cluster_preset": list(ps.CERULEAN_CLUSTER_MAPS),
+        "script_coverage_preset": list(ps.SCRIPT_COVERAGE_MAPS),
         "note": (
             "Additive *.scripts.json via tools/parse_scripts.py (stdlib). "
             "parsed/ is workspace-local / gitignored by Workspace I/O — regenerate with "
-            "`python3 tools/parse_scripts.py --corridor` after parse_map. "
+            "`python3 tools/parse_scripts.py --script-coverage` after parse_map. "
+            "Shared labels (EventScript_CutTree, etc.) resolve under data/scripts/*.inc. "
             "Does not mutate map JSON schema."
         ),
         "prototype": "tools/parse_scripts.py → parsed/<Map>.scripts.json",
         "re_run": (
-            "python3 tools/parse_scripts.py --corridor && "
+            "python3 tools/parse_scripts.py --script-coverage && "
             "python3 tools/understanding_pipeline.py --skip-parse"
         ),
     }
@@ -292,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--scripts-corridor",
         action="store_true",
-        help="Also refresh Pallet→Pewter corridor *.scripts.json via parse_scripts",
+        help="Also refresh all script-coverage presets (corridor ∪ Cerulean) via parse_scripts",
     )
     args = p.parse_args(argv)
 
@@ -308,9 +316,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.scripts_corridor:
         import parse_scripts as ps  # noqa: E402
 
-        rc = ps.main(["--corridor", "--decomp", str(decomp), "--workspace", str(workspace)])
+        rc = ps.main(
+            ["--script-coverage", "--decomp", str(decomp), "--workspace", str(workspace)]
+        )
         if rc != 0:
-            print("warning: parse_scripts --corridor reported failures", file=sys.stderr)
+            print(
+                "warning: parse_scripts --script-coverage reported failures",
+                file=sys.stderr,
+            )
     status = run_cycle(
         decomp,
         workspace,

@@ -54,6 +54,31 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_Aide\b|AlreadyGotHM05|GetAideRequestInfo", re.I), "Oak aide HM/item gift (Route 2 gate; dex-count gated)."),
     (re.compile(r"EventScript_Reyley|DeclineTrade|AlreadyTraded|NotRequestedMon", re.I), "In-game trade NPC."),
     (re.compile(r"Jigglypuff", re.I), "Ambient Jigglypuff NPC (song / flavor)."),
+    # Shared field-move / center scripts (data/scripts/)
+    (re.compile(r"EventScript_CutTree|EventScript_FldEffCut|EventScript_CantCutTree", re.I), "Cut field move: chop a cuttable tree (badge/HM gated)."),
+    (re.compile(r"EventScript_RockSmash|EventScript_FldEffRockSmash|EventScript_CantSmashRock", re.I), "Rock Smash field move (badge/HM gated)."),
+    (re.compile(r"EventScript_StrengthBoulder|EventScript_FldEffStrength|EventScript_CantMoveBoulder|EventScript_AlreadyUsedStrength", re.I), "Strength field move: push boulder (badge/HM gated)."),
+    (re.compile(r"EventScript_Waterfall|EventScript_CantUseWaterfall", re.I), "Waterfall field move (badge/HM gated)."),
+    (re.compile(r"EventScript_DeepWater|EventScript_CantDive|EventScript_TrySurface|EventScript_CantSurface", re.I), "Dive / underwater surface field move."),
+    (re.compile(r"EventScript_PkmnCenterNurse", re.I), "Pokémon Center nurse heal (shared)."),
+    (re.compile(r"EventScript_PC\b", re.I), "PC access script (shared)."),
+    (re.compile(r"EventScript_HiddenItem|HiddenItemScript", re.I), "Hidden item pickup (shared)."),
+    # Cerulean / Mt. Moon / Nugget Bridge / Bill corridor
+    (re.compile(r"EventScript_Misty|DefeatedMisty|GiveTM03|TM03", re.I), "Gym Leader Misty battle / TM reward."),
+    (re.compile(r"BikeShop|Bicycle\b|BikeVoucher", re.I), "Cerulean Bike Shop: bicycle / voucher exchange."),
+    (re.compile(r"CeruleanCaveGuard", re.I), "Cerulean Cave entrance guard (story-gated)."),
+    (re.compile(r"DomeFossil|HelixFossil", re.I), "Mt. Moon fossil choice (Dome vs Helix)."),
+    (re.compile(r"Grunt|Rocket\b", re.I), "Team Rocket grunt battle / scene."),
+    (re.compile(r"Nugget|RocketTrigger", re.I), "Nugget Bridge / Rocket reward scene (Route 24)."),
+    (re.compile(r"EventScript_Bill\b|SeaCottage", re.I), "Bill's Sea Cottage: Pokémon Storage System / rescue scene."),
+    (re.compile(r"MegaKickTutor|MegaPunchTutor|MoveTutor", re.I), "Move tutor NPC."),
+    (re.compile(r"WonderNews|BerryCrush|BerryPowder", re.I), "Berry / Wonder News / Powder house interact."),
+    (re.compile(r"BadgeGuy|WallHole", re.I), "Cerulean house flavor NPC / prop."),
+    (re.compile(r"Slowbro", re.I), "Cerulean Slowbro NPC (flavor / follows trainer)."),
+    (re.compile(r"Policeman|CeruleanCity_EventScript_Grunt", re.I), "Cerulean stolen-TM / Rocket chase aftermath."),
+    (re.compile(r"UndergroundPathSign", re.I), "Underground Path entrance sign."),
+    (re.compile(r"MtMoonSign|ZubatSign", re.I), "Mt. Moon area sign / flavor text."),
+    (re.compile(r"ItemTM|ItemEscapeRope|ItemMoonStone|ItemRareCandy|ItemPotion|ItemAntidote|ItemRevive|ItemStarPiece|ItemParalyzeHeal", re.I), "Visible item ball pickup."),
     # Generic trainers (after specific leaders)
     (re.compile(r"EventScript_(Rick|Doug|Sammy|Anthony|Charlie|Liam|Jason|Cole|Atsushi|Kiyo|Takashi|Samuel|Yuji|Warren)\b", re.I), "Trainer battle script (see body for trainerbattle_*)."),
     (re.compile(r"Rival\b", re.I), "Rival interact dialogue (waits for / reacts to starter choice)."),
@@ -128,6 +153,37 @@ def find_label_in_inc(inc_path: Path, label: str) -> tuple[int, list[str]] | Non
     return line_no, lines[:40]
 
 
+
+def find_shared_script_label(decomp: Path, label: str) -> tuple[str, list[str]] | None:
+    """Search data/scripts/*.inc for a shared label.
+
+    Returns (definition_path_with_line, body_lines) or None.
+    Prefers an exact ``data/scripts/<label>.inc`` filename hit, then scans all
+    ``*.inc`` files under ``data/scripts/`` (e.g. EventScript_CutTree in field_moves.inc).
+    """
+    scripts_dir = decomp / "data" / "scripts"
+    if not scripts_dir.is_dir():
+        return None
+    exact = scripts_dir / f"{label}.inc"
+    candidates: list[Path] = []
+    if exact.is_file():
+        candidates.append(exact)
+    candidates.extend(
+        sorted(p for p in scripts_dir.glob("*.inc") if p.resolve() != exact.resolve())
+    )
+    seen: set[Path] = set()
+    for inc in candidates:
+        key = inc.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        hit = find_label_in_inc(inc, label)
+        if hit:
+            line_no, body = hit
+            return f"data/scripts/{inc.name}:{line_no}", body
+    return None
+
+
 def resolve_symbol(decomp: Path, map_name: str, sym: str, kind: str) -> dict:
     info: dict = {"symbol": sym, "kind": kind, "definition": None, "summary": None}
     if kind == "item" or sym.startswith("ITEM_"):
@@ -168,22 +224,36 @@ def resolve_symbol(decomp: Path, map_name: str, sym: str, kind: str) -> dict:
         info["summary"] = "Var constant; see vars.h."
         return info
 
-    # script
+    # script: map-local first, then shared data/scripts/*.inc
     info["kind"] = "script"
-    candidates = [
-        decomp / "data" / "maps" / map_name / "scripts.inc",
-        decomp / "data" / "scripts" / f"{sym}.inc",  # unlikely
-    ]
-    # Also search common shared scripts briefly via rg-less scan of map scripts only
-    for c in candidates:
-        hit = find_label_in_inc(c, sym)
-        if hit:
-            line_no, body = hit
-            info["definition"] = f"data/maps/{map_name}/scripts.inc:{line_no}"
-            info["summary"] = summarize_script(sym, body)
-            info["body_preview"] = body[:12]
-            return info
-    info["summary"] = "Script label not found in map scripts.inc (may live in data/scripts/ or another map)."
+    map_inc = decomp / "data" / "maps" / map_name / "scripts.inc"
+    hit = find_label_in_inc(map_inc, sym)
+    if hit:
+        line_no, body = hit
+        info["definition"] = f"data/maps/{map_name}/scripts.inc:{line_no}"
+        info["summary"] = summarize_script(sym, body)
+        info["body_preview"] = body[:12]
+        return info
+    shared = find_shared_script_label(decomp, sym)
+    if shared:
+        rel_def, body = shared
+        info["definition"] = rel_def
+        info["summary"] = summarize_script(sym, body)
+        info["body_preview"] = body[:12]
+        return info
+    # Cheap fallback: a few Common_* attendants live inline in event_scripts.s
+    es = decomp / "data" / "event_scripts.s"
+    hit = find_label_in_inc(es, sym)
+    if hit:
+        line_no, body = hit
+        info["definition"] = f"data/event_scripts.s:{line_no}"
+        info["summary"] = summarize_script(sym, body)
+        info["body_preview"] = body[:12]
+        return info
+    info["summary"] = (
+        "Script label not found in map scripts.inc, data/scripts/*.inc, "
+        "or data/event_scripts.s (may live in another map)."
+    )
     return info
 
 
@@ -234,7 +304,7 @@ def parse_map_scripts(decomp: Path, workspace: Path, map_query: str) -> dict:
     }
 
 
-# Pallet → Viridian → Pewter corridor (+ Pallet indoor neighbors)
+# Pallet → Viridian → Pewter corridor (+ Pallet indoor neighbors) — slice 1 / PR #5
 CORRIDOR_MAPS = [
     "PalletTown",
     "PalletTown_PlayersHouse_1F",
@@ -268,6 +338,43 @@ CORRIDOR_MAPS = [
     "PewterCity_House2",
 ]
 
+# Slice 2: Pewter → Mt. Moon → Cerulean → Nugget Bridge / Bill → Route5/6 Saffron approach
+CERULEAN_CLUSTER_MAPS = [
+    "Route3",
+    "Route4",
+    "Route4_PokemonCenter_1F",
+    "Route4_PokemonCenter_2F",
+    "MtMoon_1F",
+    "MtMoon_B1F",
+    "MtMoon_B2F",
+    "CeruleanCity",
+    "CeruleanCity_BikeShop",
+    "CeruleanCity_Gym",
+    "CeruleanCity_House1",
+    "CeruleanCity_House2",
+    "CeruleanCity_House3",
+    "CeruleanCity_House4",
+    "CeruleanCity_House5",
+    "CeruleanCity_Mart",
+    "CeruleanCity_PokemonCenter_1F",
+    "CeruleanCity_PokemonCenter_2F",
+    "Route24",
+    "Route25",
+    "Route25_SeaCottage",
+    "Route5",
+    "Route5_PokemonDayCare",
+    "Route5_SouthEntrance",
+    "Route6",
+    "Route6_NorthEntrance",
+    "Route6_UnusedHouse",
+    "UndergroundPath_NorthEntrance",
+    "UndergroundPath_NorthSouthTunnel",
+    "UndergroundPath_SouthEntrance",
+]
+
+# Union of known additive script-coverage presets (corridor ∪ Cerulean cluster)
+SCRIPT_COVERAGE_MAPS = list(dict.fromkeys([*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS]))
+
 
 def list_script_maps(workspace: Path) -> list[str]:
     """Map names that already have additive *.scripts.json (sorted)."""
@@ -283,7 +390,17 @@ def list_script_maps(workspace: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Attach script/flag/var summaries (additive *.scripts.json).")
     p.add_argument("maps", nargs="*", help="Map names (parsed/<Name>.json must exist)")
-    p.add_argument("--corridor", action="store_true", help="Parse Pallet→Viridian→Pewter corridor set")
+    p.add_argument("--corridor", action="store_true", help="Parse Pallet→Viridian→Pewter corridor set (slice 1)")
+    p.add_argument(
+        "--cerulean",
+        action="store_true",
+        help="Parse Pewter→Mt.Moon→Cerulean→Route5/6 cluster (slice 2)",
+    )
+    p.add_argument(
+        "--script-coverage",
+        action="store_true",
+        help="Parse all known script-coverage presets (corridor ∪ Cerulean cluster)",
+    )
     p.add_argument("--all-parsed", action="store_true", help="Parse every map with parsed/<Name>.json")
     p.add_argument("--decomp", type=Path, default=DEFAULT_DECOMP)
     p.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
@@ -292,8 +409,13 @@ def main(argv: list[str] | None = None) -> int:
     workspace = args.workspace.resolve()
 
     maps: list[str] = list(args.maps)
-    if args.corridor:
-        maps.extend(CORRIDOR_MAPS)
+    if args.script_coverage:
+        maps.extend(SCRIPT_COVERAGE_MAPS)
+    else:
+        if args.corridor:
+            maps.extend(CORRIDOR_MAPS)
+        if args.cerulean:
+            maps.extend(CERULEAN_CLUSTER_MAPS)
     if args.all_parsed:
         maps.extend(
             sorted(
@@ -312,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
             seen.add(m)
             ordered.append(m)
     if not ordered:
-        p.error("provide map names and/or --corridor / --all-parsed")
+        p.error("provide map names and/or --corridor / --cerulean / --script-coverage / --all-parsed")
 
     fails = 0
     for m in ordered:
