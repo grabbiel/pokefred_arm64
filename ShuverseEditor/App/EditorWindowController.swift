@@ -10,6 +10,10 @@ final class EditorWindowController: NSWindowController {
     private var selection: CellInspection?
     private var rendererNote: String?
     private var cameraLine = "No map"
+    private var swatchSheet: MetatileSwatchSheet?
+    private var swatchKey: String?
+    private var swatchNote = ""
+    private var swatchGeneration: UInt64 = 1
 
     init() {
         overlay = ImGuiOverlayView(frame: .zero, device: canvas.device)
@@ -160,14 +164,45 @@ final class EditorWindowController: NSWindowController {
                 active: map.mapId == editorDocument.activeMapId
             )
         }
+        let primary = editorDocument.activeMap?.tilesets.primary ?? ""
+        let secondary = editorDocument.activeMap?.tilesets.secondary ?? ""
+        refreshSwatches(primary: primary, secondary: secondary)
         return ImGuiDockModel(
             maps: maps,
             inspector: InspectorText.make(document: editorDocument, selection: selection),
             status: cameraLine,
             rendererNote: rendererNote ?? "",
-            tilesetPrimary: editorDocument.activeMap?.tilesets.primary ?? "",
-            tilesetSecondary: editorDocument.activeMap?.tilesets.secondary ?? ""
+            mapKey: editorDocument.activeMapId ?? "",
+            tilesetPrimary: primary,
+            tilesetSecondary: secondary,
+            swatches: swatchSheet,
+            swatchTexID: 0,
+            swatchNote: swatchNote
         )
+    }
+
+    private func refreshSwatches(primary: String, secondary: String) {
+        let key = "\(primary)\n\(secondary)"
+        guard key != swatchKey else { return }
+        swatchKey = key
+        swatchSheet = nil
+        swatchNote = ""
+        guard !primary.isEmpty || !secondary.isEmpty else { return }
+        guard let map = editorDocument.activeMap, GBATileset.supports(map.tilesets) else {
+            swatchNote = "No 4bpp atlas is loaded for this map."
+            return
+        }
+        guard let directory = MapFileLocator.palletTownTilesetDirectory() else {
+            swatchNote = "Pallet Town 4bpp tileset files were not found."
+            return
+        }
+        do {
+            let graphics = try GBATileset.loadPalletTown(from: directory)
+            swatchSheet = MetatileSwatchSheet.make(from: graphics, generation: swatchGeneration)
+            swatchGeneration += 1
+        } catch {
+            swatchNote = error.localizedDescription
+        }
     }
 
     private func refreshChrome() {

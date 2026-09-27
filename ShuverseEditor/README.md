@@ -66,7 +66,7 @@ A transparent `MTKView` covers the window and draws four Dear ImGui panels: **Ma
 - Map List shows open maps (the sample name is enough when only Pallet Town is loaded) and can open the sample or a JSON file.
 - Inspector shows the same cell and event text as before (metatile id, attribute, packed `u16`, object / warp / trigger / sign).
 - Status shows zoom, pan, the selected cell, and the renderer note.
-- Tileset is a placeholder grid. Palette paint is not in this slice.
+- Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to read its metatile id. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
 
 Drag a tab or splitter to rearrange docks for the session. The layout is not written to an ini file.
 

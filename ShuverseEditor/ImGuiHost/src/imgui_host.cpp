@@ -215,6 +215,54 @@ void ig_host_swatch(int ident, float w, float h)
     ImGui::PopID();
 }
 
+float ig_host_content_width(void)
+{
+    return ImGui::GetContentRegionAvail().x;
+}
+
+void ig_host_push_swatch_style(void)
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1.0f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 2.0f));
+}
+
+void ig_host_pop_swatch_style(void)
+{
+    ImGui::PopStyleVar(2);
+}
+
+int ig_host_image_button(
+    int ident,
+    unsigned long long tex_id,
+    float u0,
+    float v0,
+    float u1,
+    float v1,
+    float w,
+    float h,
+    int selected)
+{
+    if (tex_id == 0 || w <= 0.0f || h <= 0.0f) {
+        return 0;
+    }
+    ImGui::PushID(ident);
+    if (selected) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.36f, 0.52f, 0.78f, 1.0f));
+    }
+    const bool clicked = ImGui::ImageButton(
+        "swatch",
+        (ImTextureID)tex_id,
+        ImVec2(w, h),
+        ImVec2(u0, v0),
+        ImVec2(u1, v1),
+        ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+    if (selected) {
+        ImGui::PopStyleColor();
+    }
+    ImGui::PopID();
+    return clicked ? 1 : 0;
+}
+
 void ig_host_render(void)
 {
     ImGui::Render();
