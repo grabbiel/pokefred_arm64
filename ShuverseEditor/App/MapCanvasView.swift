@@ -132,7 +132,7 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             grid: grid,
             markers: markers,
             selection: selectionInstances,
-            uniforms: makeUniforms(),
+            uniforms: makeUniforms(tileWidth: encoder.tileWidth, tileHeight: encoder.tileHeight),
             gridDirty: &gridDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
@@ -278,6 +278,8 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         descriptor.depthAttachment.loadAction = .clear
         descriptor.depthAttachment.storeAction = .dontCare
         descriptor.depthAttachment.clearDepth = Double(MapDepth.clear)
+        descriptor.tileWidth = MapGPUState.tileWidth
+        descriptor.tileHeight = MapGPUState.tileHeight
     }
 
     private func prepareMetal() {
@@ -292,14 +294,15 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         onRendererNote?(metalError)
     }
 
-    private func makeUniforms() -> MapGPUUniforms {
+    private func makeUniforms(tileWidth: Int, tileHeight: Int) -> MapGPUUniforms {
         let scale: Float
         if bounds.width > 1, drawableSize.width > 0 {
             scale = Float(drawableSize.width / bounds.width)
         } else {
             scale = 1
         }
-        let tile = gpu.tileSize
+        let resolvedTileWidth = tileWidth > 0 ? tileWidth : MapGPUState.tileWidth
+        let resolvedTileHeight = tileHeight > 0 ? tileHeight : MapGPUState.tileHeight
         return MapGPUUniforms(
             originX: camera.originX,
             originY: camera.originY,
@@ -312,8 +315,8 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             selectedX: Int32(selection?.x ?? -1),
             selectedY: Int32(selection?.y ?? -1),
             overlayFlags: overlayFlags,
-            tileWidth: UInt32(tile.width),
-            tileHeight: UInt32(tile.height)
+            tileWidth: UInt32(resolvedTileWidth),
+            tileHeight: UInt32(resolvedTileHeight)
         )
     }
 

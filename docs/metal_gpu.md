@@ -37,7 +37,7 @@ Tiles, markers, and the selection outline are batched in a single encoder. That 
 
 `map_tile_overlay` is a tile kernel. It reads the color imageblock, optionally tints cells whose map attribute is non-zero, optionally stamps the selection border, and writes the imageblock back. Those pixels never round-trip through a separate overlay target.
 
-The kernel is compiled with the rest of the shader. A second pipeline attaches it (`threadgroupSizeMatchesTileSize`, `dispatchThreadsPerTile`). Draw pipelines used for the default frame do **not** include the tile function, so skipping the dispatch still stores color. Dispatch runs only when `MapCanvasView.overlayFlags` is non-zero:
+On macOS the kernel is a separate `MTLTileRenderPipelineDescriptor` (`threadgroupSizeMatchesTileSize`, color format matching the drawable). The pass asks for 32×32 tiles. `dispatchThreadsPerTile` uses the encoder’s tile size. Geometry pipelines stay free of that kernel, so skipping the dispatch still stores color. Dispatch runs only when `MapCanvasView.overlayFlags` is non-zero:
 
 - `MapOverlayFlags.collisionTint` — darken attribute ≠ 0 by `MapTileOverlay.collisionTintScale` (0.82)
 - `MapOverlayFlags.selectionOutline` — gold border in the imageblock. Leave this off while the depth-tested outline quads are drawn, or the border is drawn twice. The tile-shader border does not write depth.

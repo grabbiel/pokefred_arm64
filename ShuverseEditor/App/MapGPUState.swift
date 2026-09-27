@@ -79,15 +79,12 @@ final class MapGPUState {
     private var selectionRing: SharedRingBuffer?
     private var uploadFailed = false
 
+    /// On-chip tile size requested on the render pass. Apple GPUs accept 32×32.
+    static let tileWidth = 32
+    static let tileHeight = 32
+
     var note: String? {
         metalError ?? tileOverlayFault
-    }
-
-    var tileSize: (width: Int, height: Int) {
-        guard let pipeline = tileOverlayPipeline, pipeline.tileWidth > 0, pipeline.tileHeight > 0 else {
-            return (0, 0)
-        }
-        return (pipeline.tileWidth, pipeline.tileHeight)
     }
 
     func prepare(device: MTLDevice, colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat) {
@@ -103,7 +100,6 @@ final class MapGPUState {
                 vertexDescriptor: MapShaders.tileVertexDescriptor(),
                 colorFormat: colorFormat,
                 depthFormat: depthFormat,
-                tileFunction: nil,
                 label: "map-tiles"
             )
             spritePipeline = try makePipeline(
@@ -114,7 +110,6 @@ final class MapGPUState {
                 vertexDescriptor: MapShaders.spriteVertexDescriptor(),
                 colorFormat: colorFormat,
                 depthFormat: depthFormat,
-                tileFunction: nil,
                 label: "map-sprites"
             )
             guard let depthState = device.makeDepthStencilState(descriptor: MapShaders.depthStencilDescriptor()) else {
@@ -150,7 +145,7 @@ final class MapGPUState {
             self.markerRing = markerRing
             self.selectionRing = selectionRing
             metalError = nil
-            attachTileOverlay(device: device, library: library, colorFormat: colorFormat, depthFormat: depthFormat)
+            attachTileOverlay(device: device, library: library, colorFormat: colorFormat)
         } catch {
             metalError = error.localizedDescription
         }
@@ -226,14 +221,16 @@ final class MapGPUState {
         }
 
         // One pass. Depth is `.dontCare` on store, so the overlay kernel only
-        // has to write the color imageblock. Dispatch is opt-in: the draw
-        // pipelines have no tile function, and a skipped dispatch still stores color.
-        if uniforms.overlayFlags != 0, tileOverlayReady, canDraw,
-           let overlay = tileOverlayPipeline, overlay.tileWidth > 0, overlay.tileHeight > 0 {
+        // has to write the color imageblock. Dispatch is opt-in: the geometry
+        // pipelines are separate from the tile pipeline, and a skipped
+        // dispatch still stores color.
+        let dispatchWidth = encoder.tileWidth > 0 ? encoder.tileWidth : Self.tileWidth
+        let dispatchHeight = encoder.tileHeight > 0 ? encoder.tileHeight : Self.tileHeight
+        if uniforms.overlayFlags != 0, tileOverlayReady, canDraw, let overlay = tileOverlayPipeline {
             encoder.setRenderPipelineState(overlay)
             encoder.setTileBuffer(uniformRing.buffers[slot], offset: 0, index: 0)
             encoder.setTileBuffer(gridRing.buffers[slot], offset: 0, index: 1)
-            encoder.dispatchThreadsPerTile(MTLSize(width: overlay.tileWidth, height: overlay.tileHeight, depth: 1))
+            encoder.dispatchThreadsPerTile(MTLSize(width: dispatchWidth, height: dispatchHeight, depth: 1))
         }
     }
 
@@ -315,24 +312,24 @@ final class MapGPUState {
     private func attachTileOverlay(
         device: MTLDevice,
         library: MTLLibrary,
-        colorFormat: MTLPixelFormat,
-        depthFormat: MTLPixelFormat
+        colorFormat: MTLPixelFormat
     ) {
         guard supportsTileShaders(device),
               let tileFunction = library.makeFunction(name: MapShaders.tileFunction) else {
             return
         }
         do {
-            tileOverlayPipeline = try makePipeline(
-                device: device,
-                library: library,
-                vertexName: MapShaders.vertexFunction,
-                fragmentName: MapShaders.fragmentFunction,
-                vertexDescriptor: MapShaders.tileVertexDescriptor(),
-                colorFormat: colorFormat,
-                depthFormat: depthFormat,
-                tileFunction: tileFunction,
-                label: "map-tile-overlay"
+            let descriptor = MTLTileRenderPipelineDescriptor()
+            descriptor.label = "map-tile-overlay"
+            descriptor.tileFunction = tileFunction
+            descriptor.threadgroupSizeMatchesTileSize = true
+            descriptor.rasterSampleCount = 1
+            descriptor.colorAttachments[0].pixelFormat = colorFormat
+            var reflection: MTLAutoreleasedRenderPipelineReflection?
+            tileOverlayPipeline = try device.makeRenderPipelineState(
+                tileDescriptor: descriptor,
+                options: [],
+                reflection: &reflection
             )
             tileOverlayReady = true
             tileOverlayFault = nil
@@ -350,7 +347,6 @@ final class MapGPUState {
         vertexDescriptor: MTLVertexDescriptor,
         colorFormat: MTLPixelFormat,
         depthFormat: MTLPixelFormat,
-        tileFunction: MTLFunction?,
         label: String
     ) throws -> MTLRenderPipelineState {
         guard let vertex = library.makeFunction(name: vertexName),
@@ -370,10 +366,6 @@ final class MapGPUState {
             color.destinationRGBBlendFactor = .oneMinusSourceAlpha
             color.sourceAlphaBlendFactor = .sourceAlpha
             color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        }
-        if let tileFunction {
-            descriptor.tileFunction = tileFunction
-            descriptor.threadgroupSizeMatchesTileSize = true
         }
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }
