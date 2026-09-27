@@ -13,6 +13,7 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
     var onOpenSample: (() -> Void)?
     var onOpenJSON: (() -> Void)?
     var onDropURL: ((URL) -> Void)?
+    var onSelectBrush: ((UInt16) -> Void)?
     var keepCanvasFirstResponder: (() -> Void)?
 
     private let renderer: ImGuiMetalRenderer?
@@ -233,8 +234,12 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
         let focus = action.focusMapId
         let openSample = action.openSample
         let openJSON = action.openJSON
-        guard focus != nil || openSample || openJSON else { return }
+        let brush = action.brushMetatileId
+        guard focus != nil || openSample || openJSON || brush != nil else { return }
         DispatchQueue.main.async { [weak self] in
+            if let brush {
+                self?.onSelectBrush?(brush)
+            }
             if let focus {
                 self?.onFocusMap?(focus)
             }
