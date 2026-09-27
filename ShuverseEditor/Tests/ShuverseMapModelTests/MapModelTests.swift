@@ -204,7 +204,7 @@ final class MapModelTests: XCTestCase {
 
         let canopy = MapDrawListBuilder.canopy(on: map)
         let treeCells = map.cells.enumerated().compactMap { index, cell -> Int? in
-            PalletTownCanopy.treeTopMetatileIds.contains(cell.metatileId) ? index : nil
+            GeneralTilesetTreeTops.treeTopMetatileIds.contains(cell.metatileId) ? index : nil
         }
         XCTAssertEqual(canopy.map { Int($0.cellIndex) }, treeCells)
         XCTAssertEqual(canopy.count, 8)
@@ -236,7 +236,12 @@ final class MapModelTests: XCTestCase {
         XCTAssertLessThan(covered.centerY + covered.halfY, Float(20))
     }
 
-    func testCanopyStubIsPalletTreeTopsOnly() {
+    func testCanopyIdsAreGeneralTilesetNotPalletLayout() {
+        XCTAssertEqual(
+            GeneralTilesetTreeTops.treeTopMetatileIds,
+            Set<UInt16>([0x00A, 0x00B, 0x00C, 0x00E, 0x00F, 0x013])
+        )
+
         let empty = MapDocument(
             mapId: "MAP_X",
             name: "X",
@@ -255,6 +260,26 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(canopy.map(\.cellIndex), [UInt32(0)])
         XCTAssertEqual(canopy[0].depth, MapDepth.canopy)
         XCTAssertTrue(MapDrawListBuilder.depthSprites(on: empty).isEmpty)
+
+        // Same cells the Pallet sample uses for its red stubs. A different map
+        // still gets canopy from the general-tileset ids, and no depth sprites.
+        let width = 9
+        let height = 20
+        var cells = Array(repeating: MapCell(metatileId: 1, mapAttribute: 0), count: width * height)
+        cells[19 * width + 2] = MapCell(metatileId: 14, mapAttribute: 0)
+        let route = MapDocument(
+            mapId: "MAP_ROUTE1",
+            name: "Route 1",
+            layoutId: "LAYOUT_ROUTE1",
+            music: "M",
+            weather: "W",
+            mapType: "T",
+            tilesets: TilesetRef(primary: "gTileset_General", secondary: "gTileset_PalletTown"),
+            size: MapSize(width: width, height: height),
+            cells: cells
+        )
+        XCTAssertEqual(MapDrawListBuilder.canopy(on: route).map(\.cellIndex), [UInt32(19 * width + 2)])
+        XCTAssertTrue(MapDrawListBuilder.depthSprites(on: route).isEmpty)
     }
 
     func testStackedMarkersAndTileOverlayMath() {
