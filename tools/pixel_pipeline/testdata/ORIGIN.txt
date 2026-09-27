@@ -3,3 +3,4 @@ tanoby_ruins_tiles.png data/tilesets/secondary/tanoby_ruins/tiles.png
 game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png
 pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png
 mart_tiles.png data/tilesets/secondary/mart/tiles.png
+school_tiles.png data/tilesets/secondary/school/tiles.png
