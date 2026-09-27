@@ -65,6 +65,7 @@ final class MapGPUState {
     private(set) var metalError: String?
 
     private var tilePipeline: MTLRenderPipelineState?
+    private var canopyPipeline: MTLRenderPipelineState?
     private var spritePipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var tileCorners: MTLBuffer?
@@ -72,6 +73,8 @@ final class MapGPUState {
     private var uniformRing: SharedRingBuffer?
     private var gridRing: SharedRingBuffer?
     private var markerRing: SharedRingBuffer?
+    private var canopyRing: SharedRingBuffer?
+    private var depthSpriteRing: SharedRingBuffer?
     private var selectionRing: SharedRingBuffer?
     private var indexRing: SharedRingBuffer?
     private var indexTextures: [MTLTexture] = []
@@ -103,6 +106,16 @@ final class MapGPUState {
                 depthFormat: depthFormat,
                 label: "map-tiles"
             )
+            canopyPipeline = try makePipeline(
+                device: device,
+                library: library,
+                vertexName: MapShaders.canopyVertexFunction,
+                fragmentName: MapShaders.canopyFragmentFunction,
+                vertexDescriptor: MapShaders.canopyVertexDescriptor(),
+                colorFormat: colorFormat,
+                depthFormat: depthFormat,
+                label: "map-canopy"
+            )
             spritePipeline = try makePipeline(
                 device: device,
                 library: library,
@@ -130,6 +143,16 @@ final class MapGPUState {
                     bytes: MapGPULayout.initialMarkerInstances * MapGPULayout.quadInstanceBytes,
                     label: "markers"
                   ),
+                  let canopyRing = SharedRingBuffer(
+                    device: device,
+                    bytes: MapGPULayout.initialCanopyInstances * MapGPULayout.canopyInstanceBytes,
+                    label: "canopy"
+                  ),
+                  let depthSpriteRing = SharedRingBuffer(
+                    device: device,
+                    bytes: MapGPULayout.initialDepthSprites * MapGPULayout.quadInstanceBytes,
+                    label: "depth-sprites"
+                  ),
                   let selectionRing = SharedRingBuffer(
                     device: device,
                     bytes: MapGPULayout.selectionInstances * MapGPULayout.quadInstanceBytes,
@@ -142,6 +165,8 @@ final class MapGPUState {
             self.uniformRing = uniformRing
             self.gridRing = gridRing
             self.markerRing = markerRing
+            self.canopyRing = canopyRing
+            self.depthSpriteRing = depthSpriteRing
             self.selectionRing = selectionRing
             metalError = nil
         } catch {
@@ -153,21 +178,28 @@ final class MapGPUState {
         encoder: MTLRenderCommandEncoder,
         slot: Int,
         grid: MapMetatileGrid?,
+        canopy: [MapCanopyInstance],
+        depthSprites: [MapQuadInstance],
         markers: [MapQuadInstance],
         selection: [MapQuadInstance],
         uniforms: MapGPUUniforms,
         gridDirty: inout RingSlotDirty,
+        canopyDirty: inout RingSlotDirty,
+        depthSpriteDirty: inout RingSlotDirty,
         markerDirty: inout RingSlotDirty,
         selectionDirty: inout RingSlotDirty
     ) -> Bool {
         guard metalError == nil,
               let tilePipeline,
+              let canopyPipeline,
               let spritePipeline,
               let depthState,
               let tileCorners,
               let spriteCorners,
               let uniformRing,
               let gridRing,
+              let canopyRing,
+              let depthSpriteRing,
               let markerRing,
               let selectionRing else {
             return true
@@ -177,14 +209,20 @@ final class MapGPUState {
         upload(
             slot: slot,
             grid: grid,
+            canopy: canopy,
+            depthSprites: depthSprites,
             markers: markers,
             selection: selection,
             uniforms: uniforms,
             gridRing: gridRing,
+            canopyRing: canopyRing,
+            depthSpriteRing: depthSpriteRing,
             markerRing: markerRing,
             selectionRing: selectionRing,
             uniformRing: uniformRing,
             gridDirty: &gridDirty,
+            canopyDirty: &canopyDirty,
+            depthSpriteDirty: &depthSpriteDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
@@ -193,7 +231,33 @@ final class MapGPUState {
 
         let cells = grid?.cellCount ?? 0
         let canDraw = cells > 0 && uniforms.viewportWidth > 1 && uniforms.viewportHeight > 1 && uniforms.pointsPerMetatile > 0
-        if canDraw && texturedGround, indexTextures.indices.contains(slot), let paletteRGB555, let metatileTable {
+        let textured = canDraw && texturedGround && indexTextures.indices.contains(slot)
+        // Canopy, then the sprite stub, then ground. Ground is later and opaque;
+        // less-than depth keeps the closer leaves (0.40) and stub (0.55) in front.
+        // One encoder, so the color attachment stays on-chip for the pass.
+        if textured, !canopy.isEmpty, let paletteRGB555, let metatileTable {
+            encoder.setRenderPipelineState(canopyPipeline)
+            encoder.setDepthStencilState(depthState)
+            encoder.setVertexBuffer(tileCorners, offset: 0, index: 0)
+            encoder.setVertexBuffer(canopyRing.buffers[slot], offset: 0, index: 1)
+            encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 2)
+            encoder.setVertexBuffer(gridRing.buffers[slot], offset: 0, index: 3)
+            encoder.setFragmentTexture(indexTextures[slot], index: 0)
+            encoder.setFragmentBuffer(paletteRGB555, offset: 0, index: 0)
+            encoder.setFragmentBuffer(metatileTable, offset: 0, index: 1)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: canopy.count)
+        }
+
+        if textured, !depthSprites.isEmpty {
+            encoder.setRenderPipelineState(spritePipeline)
+            encoder.setDepthStencilState(depthState)
+            encoder.setVertexBuffer(spriteCorners, offset: 0, index: 0)
+            encoder.setVertexBuffer(depthSpriteRing.buffers[slot], offset: 0, index: 1)
+            encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 2)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: depthSprites.count)
+        }
+
+        if textured, let paletteRGB555, let metatileTable {
             encoder.setRenderPipelineState(tilePipeline)
             encoder.setDepthStencilState(depthState)
             encoder.setVertexBuffer(tileCorners, offset: 0, index: 0)
@@ -226,14 +290,20 @@ final class MapGPUState {
     private func upload(
         slot: Int,
         grid: MapMetatileGrid?,
+        canopy: [MapCanopyInstance],
+        depthSprites: [MapQuadInstance],
         markers: [MapQuadInstance],
         selection: [MapQuadInstance],
         uniforms: MapGPUUniforms,
         gridRing: SharedRingBuffer,
+        canopyRing: SharedRingBuffer,
+        depthSpriteRing: SharedRingBuffer,
         markerRing: SharedRingBuffer,
         selectionRing: SharedRingBuffer,
         uniformRing: SharedRingBuffer,
         gridDirty: inout RingSlotDirty,
+        canopyDirty: inout RingSlotDirty,
+        depthSpriteDirty: inout RingSlotDirty,
         markerDirty: inout RingSlotDirty,
         selectionDirty: inout RingSlotDirty
     ) {
@@ -244,6 +314,20 @@ final class MapGPUState {
             ring: gridRing,
             dirty: &gridDirty,
             minimumBytes: MapGPULayout.gridWordBytes
+        )
+        writeIfDirty(
+            canopy,
+            slot: slot,
+            ring: canopyRing,
+            dirty: &canopyDirty,
+            minimumBytes: MapGPULayout.canopyInstanceBytes
+        )
+        writeIfDirty(
+            depthSprites,
+            slot: slot,
+            ring: depthSpriteRing,
+            dirty: &depthSpriteDirty,
+            minimumBytes: MapGPULayout.quadInstanceBytes
         )
         writeIfDirty(
             markers,

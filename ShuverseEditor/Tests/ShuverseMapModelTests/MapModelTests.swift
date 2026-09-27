@@ -34,6 +34,10 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.halfX), MapGPULayout.instanceHalfOffset)
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.red), MapGPULayout.instanceColorOffset)
         XCTAssertEqual(MemoryLayout.offset(of: \MapQuadInstance.depth), MapGPULayout.instanceDepthOffset)
+        XCTAssertEqual(MemoryLayout<MapCanopyInstance>.size, MapGPULayout.canopyInstanceBytes)
+        XCTAssertEqual(MemoryLayout<MapCanopyInstance>.stride, MapGPULayout.canopyInstanceBytes)
+        XCTAssertEqual(MemoryLayout.offset(of: \MapCanopyInstance.cellIndex), MapGPULayout.canopyCellOffset)
+        XCTAssertEqual(MemoryLayout.offset(of: \MapCanopyInstance.depth), MapGPULayout.canopyDepthOffset)
 
         XCTAssertGreaterThan(MapDepth.clear, MapDepth.ground)
         XCTAssertGreaterThan(MapDepth.ground, MapDepth.sprite)
@@ -197,6 +201,60 @@ final class MapModelTests: XCTestCase {
         )
         XCTAssertFalse(selectionCapacity.prepare(byteCount: selected.count * MapGPULayout.quadInstanceBytes))
         XCTAssertTrue(gridCapacity.prepare(byteCount: 5000 * MapGPULayout.gridWordBytes))
+
+        let canopy = MapDrawListBuilder.canopy(on: map)
+        let treeCells = map.cells.enumerated().compactMap { index, cell -> Int? in
+            PalletTownCanopy.treeTopMetatileIds.contains(cell.metatileId) ? index : nil
+        }
+        XCTAssertEqual(canopy.map { Int($0.cellIndex) }, treeCells)
+        XCTAssertEqual(canopy.count, 8)
+        XCTAssertTrue(canopy.allSatisfy { $0.depth == MapDepth.canopy })
+        XCTAssertEqual(Set(treeCells.map { map.cells[$0].metatileId }), Set<UInt16>([14, 15]))
+        var canopyCapacity = RingCapacity(
+            bytes: MapGPULayout.initialCanopyInstances * MapGPULayout.canopyInstanceBytes
+        )
+        XCTAssertFalse(canopyCapacity.prepare(byteCount: canopy.count * MapGPULayout.canopyInstanceBytes))
+
+        let sprites = MapDrawListBuilder.depthSprites(on: map)
+        XCTAssertEqual(sprites.count, 2)
+        XCTAssertTrue(sprites.allSatisfy { $0.depth == MapDepth.sprite })
+        XCTAssertLessThan(MapDepth.canopy, MapDepth.sprite)
+        let overlapsCanopy = sprites.filter { sprite in
+            canopy.contains { instance in
+                let index = Int(instance.cellIndex)
+                return spriteOverlaps(sprite, cellX: index % map.size.width, cellY: index / map.size.width)
+            }
+        }
+        XCTAssertEqual(overlapsCanopy.count, 1)
+        let open = try XCTUnwrap(sprites.first { sprite in !overlapsCanopy.contains(sprite) })
+        XCTAssertFalse(canopy.contains { instance in
+            let index = Int(instance.cellIndex)
+            return spriteOverlaps(open, cellX: index % map.size.width, cellY: index / map.size.width)
+        })
+        let covered = try XCTUnwrap(overlapsCanopy.first)
+        XCTAssertGreaterThan(covered.centerY - covered.halfY, Float(19))
+        XCTAssertLessThan(covered.centerY + covered.halfY, Float(20))
+    }
+
+    func testCanopyStubIsPalletTreeTopsOnly() {
+        let empty = MapDocument(
+            mapId: "MAP_X",
+            name: "X",
+            layoutId: "LAYOUT_X",
+            music: "M",
+            weather: "W",
+            mapType: "T",
+            tilesets: TilesetRef(primary: "gTileset_General", secondary: "gTileset_PalletTown"),
+            size: MapSize(width: 2, height: 1),
+            cells: [
+                MapCell(metatileId: 14, mapAttribute: 0),
+                MapCell(metatileId: 662, mapAttribute: 0),
+            ]
+        )
+        let canopy = MapDrawListBuilder.canopy(on: empty)
+        XCTAssertEqual(canopy.map(\.cellIndex), [UInt32(0)])
+        XCTAssertEqual(canopy[0].depth, MapDepth.canopy)
+        XCTAssertTrue(MapDrawListBuilder.depthSprites(on: empty).isEmpty)
     }
 
     func testStackedMarkersAndTileOverlayMath() {
@@ -304,6 +362,9 @@ final class MapModelTests: XCTestCase {
         XCTAssertTrue(shaders.contains("[[stage_in]]"))
         XCTAssertTrue(shaders.contains("vertex Varying map_vertex"))
         XCTAssertTrue(shaders.contains("vertex Varying map_sprite_vertex"))
+        XCTAssertTrue(shaders.contains("vertex Varying map_canopy_vertex"))
+        XCTAssertTrue(shaders.contains("fragment float4 map_canopy_fragment"))
+        XCTAssertTrue(shaders.contains("discard_fragment()"))
         XCTAssertTrue(shaders.contains("fragment float4 map_fragment(Varying in [[stage_in]])"))
         XCTAssertTrue(shaders.contains("kernel void map_tile_overlay"))
         XCTAssertTrue(shaders.contains("imageblock<TilePixel>"))
@@ -343,6 +404,16 @@ final class MapModelTests: XCTestCase {
         XCTAssertFalse(gpu.contains("GLFW"))
         XCTAssertTrue(gpu.contains("rewriteIndexRows"))
         XCTAssertTrue(gpu.contains("IndexAtlasRows.copy"))
+        XCTAssertTrue(gpu.contains("map-canopy"))
+        XCTAssertTrue(gpu.contains("label: \"canopy\""))
+        XCTAssertTrue(gpu.contains("label: \"depth-sprites\""))
+        let canopyDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(canopyPipeline)"))
+        let groundDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(tilePipeline)"))
+        XCTAssertLessThan(canopyDraw.lowerBound, groundDraw.lowerBound)
+        let spriteDraws = ranges(of: "setRenderPipelineState(spritePipeline)", in: gpu)
+        XCTAssertEqual(spriteDraws.count, 2)
+        XCTAssertLessThan(spriteDraws[0].lowerBound, groundDraw.lowerBound)
+        XCTAssertGreaterThan(spriteDraws[1].lowerBound, groundDraw.lowerBound)
         XCTAssertTrue(gpu.contains("animDirty"))
         XCTAssertTrue(canvas.contains("isPaused = true"))
         XCTAssertTrue(canvas.contains("PalletTownTilesetAnim"))
@@ -697,6 +768,26 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(fitted.pointsPerMetatile, 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originX, -40 / 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originY, 0, accuracy: 0.001)
+    }
+
+    private func spriteOverlaps(_ sprite: MapQuadInstance, cellX: Int, cellY: Int) -> Bool {
+        let x0 = sprite.centerX - sprite.halfX
+        let x1 = sprite.centerX + sprite.halfX
+        let y0 = sprite.centerY - sprite.halfY
+        let y1 = sprite.centerY + sprite.halfY
+        let left = Float(cellX)
+        let top = Float(cellY)
+        return x0 < left + 1 && x1 > left && y0 < top + 1 && y1 > top
+    }
+
+    private func ranges(of needle: String, in text: String) -> [Range<String.Index>] {
+        var found: [Range<String.Index>] = []
+        var search = text.startIndex..<text.endIndex
+        while let range = text.range(of: needle, range: search) {
+            found.append(range)
+            search = range.upperBound..<text.endIndex
+        }
+        return found
     }
 
     private func atlasIndex(_ indices: [UInt8], tile: Int, x: Int, y: Int) -> UInt8 {

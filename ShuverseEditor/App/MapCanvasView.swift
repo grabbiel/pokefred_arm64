@@ -24,9 +24,13 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     private var needsFit = false
 
     private var grid: MapMetatileGrid?
+    private var canopy: [MapCanopyInstance] = []
+    private var depthSprites: [MapQuadInstance] = []
     private var markers: [MapQuadInstance] = []
     private var selectionInstances: [MapQuadInstance] = []
     private var gridDirty = RingSlotDirty()
+    private var canopyDirty = RingSlotDirty()
+    private var depthSpriteDirty = RingSlotDirty()
     private var markerDirty = RingSlotDirty()
     private var selectionDirty = RingSlotDirty()
 
@@ -61,13 +65,19 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         selection = nil
         if let map {
             grid = MapMetatileGrid.make(map: map)
+            canopy = MapDrawListBuilder.canopy(on: map)
+            depthSprites = MapDrawListBuilder.depthSprites(on: map)
             markers = MapDrawListBuilder.markers(on: map)
         } else {
             grid = nil
+            canopy = []
+            depthSprites = []
             markers = []
         }
         selectionInstances = []
         gridDirty.markAllDirty()
+        canopyDirty.markAllDirty()
+        depthSpriteDirty.markAllDirty()
         markerDirty.markAllDirty()
         selectionDirty.markAllDirty()
         bindTileset(for: map)
@@ -86,6 +96,9 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         text += String(format: "%.1f pt/metatile", camera.pointsPerMetatile)
         if let selection {
             text += "   cell \(selection.x), \(selection.y)"
+        }
+        if !canopy.isEmpty {
+            text += "   canopy \(canopy.count)"
         }
         if let displayedAnimFrame {
             text += "   water frame \(displayedAnimFrame)"
@@ -139,10 +152,14 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             encoder: encoder,
             slot: slot,
             grid: grid,
+            canopy: canopy,
+            depthSprites: depthSprites,
             markers: markers,
             selection: selectionInstances,
             uniforms: makeUniforms(),
             gridDirty: &gridDirty,
+            canopyDirty: &canopyDirty,
+            depthSpriteDirty: &depthSpriteDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
