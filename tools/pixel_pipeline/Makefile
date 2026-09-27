@@ -57,6 +57,9 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/pallet_town_tiles.png $(BUILD)/cli_pallet_town.4bpp $(BUILD)/cli_pallet_town.pal
 	cmp $(BUILD)/cli_pallet_town.4bpp tests/golden/pallet_town_tiles.4bpp
 	cmp $(BUILD)/cli_pallet_town.pal tests/golden/pallet_town_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/mart_tiles.png $(BUILD)/cli_mart.4bpp $(BUILD)/cli_mart.pal
+	cmp $(BUILD)/cli_mart.4bpp tests/golden/mart_tiles.4bpp
+	cmp $(BUILD)/cli_mart.pal tests/golden/mart_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@
