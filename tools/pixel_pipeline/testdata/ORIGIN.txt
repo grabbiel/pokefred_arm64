@@ -6,3 +6,4 @@ mart_tiles.png data/tilesets/secondary/mart/tiles.png
 school_tiles.png data/tilesets/secondary/school/tiles.png
 underground_path_tiles.png data/tilesets/secondary/underground_path/tiles.png
 generic_building_1_tiles.png data/tilesets/secondary/generic_building_1/tiles.png
+bike_shop_tiles.png data/tilesets/secondary/bike_shop/tiles.png

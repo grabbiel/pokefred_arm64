@@ -109,7 +109,8 @@ static int check_origin(void)
         "mart_tiles.png data/tilesets/secondary/mart/tiles.png\n"
         "school_tiles.png data/tilesets/secondary/school/tiles.png\n"
         "underground_path_tiles.png data/tilesets/secondary/underground_path/tiles.png\n"
-        "generic_building_1_tiles.png data/tilesets/secondary/generic_building_1/tiles.png\n";
+        "generic_building_1_tiles.png data/tilesets/secondary/generic_building_1/tiles.png\n"
+        "bike_shop_tiles.png data/tilesets/secondary/bike_shop/tiles.png\n";
     uint8_t *origin = NULL;
     size_t origin_n = 0;
 
@@ -376,6 +377,27 @@ static int check_generic_building_1_details(void)
     return 0;
 }
 
+static int check_bike_shop_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/bike_shop_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    /* PLTE is the same 16-gray ramp as the other sheets: 0=255, 1=238, 15=0. */
+    expect_gray_ramp_spots(&indexed, &gba);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
 int main(void)
 {
     REQUIRE(check_origin() == 0);
@@ -407,6 +429,11 @@ int main(void)
     REQUIRE(check_fixture("generic_building_1", "testdata/generic_building_1_tiles.png",
                           "tests/golden/generic_building_1_tiles.4bpp", "tests/golden/generic_building_1_tiles.pal",
                           "build/generic_building_1_tiles.4bpp", "build/generic_building_1_tiles.pal", 128, 32,
+                          2048u) == 0);
+    REQUIRE(check_bike_shop_details() == 0);
+    REQUIRE(check_fixture("bike_shop", "testdata/bike_shop_tiles.png",
+                          "tests/golden/bike_shop_tiles.4bpp", "tests/golden/bike_shop_tiles.pal",
+                          "build/bike_shop_tiles.4bpp", "build/bike_shop_tiles.pal", 128, 32,
                           2048u) == 0);
 
     EXPECT(pp_convert_png_to_gba(NULL, "build/x.4bpp", "build/x.pal", NULL) == 1);
