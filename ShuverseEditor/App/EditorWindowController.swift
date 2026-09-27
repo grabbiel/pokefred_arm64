@@ -4,21 +4,15 @@ import ShuverseMapModel
 
 final class EditorWindowController: NSWindowController {
     let canvas = MapCanvasView(frame: .zero, device: nil)
-    private let inspector = NSView()
-    private let mapPopup = NSPopUpButton()
-    private let statusLabel = NSTextField(labelWithString: "")
-    private let textView: NSTextView
-    private let textScroll: NSScrollView
+    private let overlay: ImGuiOverlayView
 
     private var editorDocument = EditorDocument()
     private var selection: CellInspection?
     private var rendererNote: String?
+    private var cameraLine = "No map"
 
     init() {
-        let scroll = NSTextView.scrollableTextView()
-        let editor = scroll.documentView as? NSTextView ?? NSTextView()
-        textScroll = scroll
-        textView = editor
+        overlay = ImGuiOverlayView(frame: .zero, device: canvas.device)
         super.init(window: nil)
         buildWindow()
     }
@@ -44,15 +38,30 @@ final class EditorWindowController: NSWindowController {
         openMap(at: url)
     }
 
+    func openPalletTown() {
+        guard let url = MapFileLocator.palletTownURL() else {
+            present(message: "Pallet Town sample was not found.")
+            return
+        }
+        openMap(at: url)
+    }
+
     func openMap(at url: URL) {
         do {
             try editorDocument.importParserMap(Data(contentsOf: url))
             selection = nil
-            refreshChrome()
             canvas.setMap(editorDocument.activeMap, fit: true)
+            refreshChrome()
         } catch {
             present(message: error.localizedDescription)
         }
+    }
+
+    func focusMap(id: String) {
+        guard editorDocument.focus(mapId: id) else { return }
+        selection = nil
+        canvas.setMap(editorDocument.activeMap, fit: true)
+        refreshChrome()
     }
 
     func present(message: String) {
@@ -94,76 +103,48 @@ final class EditorWindowController: NSWindowController {
         }
         canvas.onInspect = { [weak self] inspection in
             self?.selection = inspection
-            self?.refreshChrome()
         }
         canvas.onCameraChange = { [weak self] line in
-            self?.statusLabel.stringValue = self?.statusText(line) ?? line
+            self?.cameraLine = line
         }
         canvas.onRendererNote = { [weak self] note in
             self?.rendererNote = note
-            self?.refreshChrome()
         }
 
-        inspector.translatesAutoresizingMaskIntoConstraints = false
-        inspector.wantsLayer = true
-        inspector.layer?.backgroundColor = NSColor(srgbRed: 0.12, green: 0.125, blue: 0.15, alpha: 1).cgColor
-
-        mapPopup.translatesAutoresizingMaskIntoConstraints = false
-        mapPopup.target = self
-        mapPopup.action = #selector(activeMapChanged(_:))
-        mapPopup.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-
-        textScroll.translatesAutoresizingMaskIntoConstraints = false
-        textScroll.drawsBackground = false
-        textScroll.hasVerticalScroller = true
-        textScroll.borderType = .noBorder
-        configureTextView()
-
-        let statusBar = NSView()
-        statusBar.translatesAutoresizingMaskIntoConstraints = false
-        statusBar.wantsLayer = true
-        statusBar.layer?.backgroundColor = NSColor(srgbRed: 0.10, green: 0.11, blue: 0.13, alpha: 1).cgColor
-
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        statusLabel.textColor = NSColor(srgbRed: 0.75, green: 0.78, blue: 0.82, alpha: 1)
-        statusLabel.lineBreakMode = .byTruncatingTail
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.modelProvider = { [weak self] in
+            self?.dockModel() ?? .empty
+        }
+        overlay.onFocusMap = { [weak self] id in
+            self?.focusMap(id: id)
+        }
+        overlay.onOpenSample = { [weak self] in
+            self?.openPalletTown()
+        }
+        overlay.onOpenJSON = { [weak self] in
+            self?.openMapPanel()
+        }
+        overlay.onDropURL = { [weak self] url in
+            self?.openMap(at: url)
+        }
+        overlay.keepCanvasFirstResponder = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.canvas)
+        }
 
         host.addSubview(canvas)
-        host.addSubview(inspector)
-        host.addSubview(statusBar)
-        inspector.addSubview(mapPopup)
-        inspector.addSubview(textScroll)
-        statusBar.addSubview(statusLabel)
+        host.addSubview(overlay)
 
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             canvas.topAnchor.constraint(equalTo: host.topAnchor),
-            canvas.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
-            canvas.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            canvas.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            canvas.bottomAnchor.constraint(equalTo: host.bottomAnchor),
 
-            inspector.topAnchor.constraint(equalTo: host.topAnchor),
-            inspector.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            inspector.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
-            inspector.widthAnchor.constraint(equalToConstant: 320),
-
-            mapPopup.leadingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: 10),
-            mapPopup.trailingAnchor.constraint(equalTo: inspector.trailingAnchor, constant: -10),
-            mapPopup.topAnchor.constraint(equalTo: inspector.topAnchor, constant: 10),
-
-            textScroll.leadingAnchor.constraint(equalTo: inspector.leadingAnchor),
-            textScroll.trailingAnchor.constraint(equalTo: inspector.trailingAnchor),
-            textScroll.topAnchor.constraint(equalTo: mapPopup.bottomAnchor, constant: 8),
-            textScroll.bottomAnchor.constraint(equalTo: inspector.bottomAnchor),
-
-            statusBar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            statusBar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            statusBar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            statusBar.heightAnchor.constraint(equalToConstant: 26),
-
-            statusLabel.leadingAnchor.constraint(equalTo: statusBar.leadingAnchor, constant: 10),
-            statusLabel.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -10),
-            statusLabel.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            overlay.topAnchor.constraint(equalTo: host.topAnchor),
+            overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
 
         self.window = window
@@ -171,67 +152,27 @@ final class EditorWindowController: NSWindowController {
         canvas.reportRendererStatus()
     }
 
-    private func configureTextView() {
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = NSColor(srgbRed: 0.90, green: 0.91, blue: 0.93, alpha: 1)
-        textView.backgroundColor = .clear
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 10, height: 8)
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainer?.widthTracksTextView = true
-    }
-
-    @objc private func activeMapChanged(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        guard editorDocument.maps.indices.contains(index) else { return }
-        let mapId = editorDocument.maps[index].mapId
-        guard editorDocument.focus(mapId: mapId) else { return }
-        selection = nil
-        canvas.setMap(editorDocument.activeMap, fit: true)
-        refreshChrome()
+    private func dockModel() -> ImGuiDockModel {
+        let maps = editorDocument.maps.map { map in
+            ImGuiDockModel.MapEntry(
+                id: map.mapId,
+                title: "\(map.name) — \(map.mapId)",
+                active: map.mapId == editorDocument.activeMapId
+            )
+        }
+        return ImGuiDockModel(
+            maps: maps,
+            inspector: InspectorText.make(document: editorDocument, selection: selection),
+            status: cameraLine,
+            rendererNote: rendererNote ?? "",
+            tilesetPrimary: editorDocument.activeMap?.tilesets.primary ?? "",
+            tilesetSecondary: editorDocument.activeMap?.tilesets.secondary ?? ""
+        )
     }
 
     private func refreshChrome() {
-        rebuildMapPopup()
-        var body = InspectorText.make(document: editorDocument, selection: selection)
-        if let rendererNote, !rendererNote.isEmpty {
-            body = "Metal\n  \(rendererNote)\n\n" + body
-        }
-        textView.typingAttributes = [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: NSColor(srgbRed: 0.90, green: 0.91, blue: 0.93, alpha: 1),
-        ]
-        textView.string = body
+        cameraLine = canvas.statusLine()
         window?.title = "Shuverse Editor — \(editorDocument.activeMap?.name ?? "No Map")"
-        statusLabel.stringValue = statusText(canvas.statusLine())
-    }
-
-    private func rebuildMapPopup() {
-        mapPopup.removeAllItems()
-        if editorDocument.maps.isEmpty {
-            mapPopup.addItem(withTitle: "No map")
-            mapPopup.isEnabled = false
-            return
-        }
-        mapPopup.isEnabled = true
-        for map in editorDocument.maps {
-            mapPopup.addItem(withTitle: "\(map.name) — \(map.mapId)")
-        }
-        if let index = editorDocument.maps.firstIndex(where: { $0.mapId == editorDocument.activeMapId }) {
-            mapPopup.selectItem(at: index)
-        }
-    }
-
-    private func statusText(_ line: String) -> String {
-        if let rendererNote, !rendererNote.isEmpty {
-            return "\(line)   \(rendererNote)"
-        }
-        return line
     }
 }
 

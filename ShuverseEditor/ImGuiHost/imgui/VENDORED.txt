@@ -1,0 +1,10 @@
+Dear ImGui docking branch, tag v1.91.9b-docking
+https://github.com/ocornut/imgui/releases/tag/v1.91.9b-docking
+Commit 4806a1924ff6181180bf5e4b8b79ab4394118875
+
+Vendored files are the core library only (no examples, no backends).
+The Shuverse Editor supplies its own AppKit event routing and Swift Metal
+renderer. Objective-C++ backends are not used because SwiftPM does not
+compile .mm sources.
+
+License: LICENSE.txt (MIT).
