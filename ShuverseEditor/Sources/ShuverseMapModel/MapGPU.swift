@@ -18,7 +18,7 @@ public enum MapGPULayout {
     public static let initialGridCells = 4096
     public static let initialMarkerInstances = 256
     public static let initialCanopyInstances = 256
-    public static let initialDepthSprites = 16
+    public static let initialSpriteInstances = 16
     public static let selectionInstances = 4
 }
 
