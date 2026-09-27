@@ -27,6 +27,7 @@ targets.append(
         path: "App",
         resources: [
             .copy("Resources/PalletTown.json"),
+            .copy("Resources/tilesets"),
         ]
     )
 )

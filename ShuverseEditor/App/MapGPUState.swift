@@ -69,14 +69,20 @@ final class MapGPUState {
     private var depthState: MTLDepthStencilState?
     private var tileCorners: MTLBuffer?
     private var spriteCorners: MTLBuffer?
-    private var palette: MTLBuffer?
     private var uniformRing: SharedRingBuffer?
     private var gridRing: SharedRingBuffer?
     private var markerRing: SharedRingBuffer?
     private var selectionRing: SharedRingBuffer?
+    private var indexAtlas: MTLTexture?
+    private var indexAtlasBuffer: MTLBuffer?
+    private var paletteRGB555: MTLBuffer?
+    private var metatileTable: MTLBuffer?
     private var uploadFailed = false
+    private var statusNote: String?
+    private(set) var tilesetReady = false
+    private var texturedGround = false
 
-    var note: String? { metalError }
+    var note: String? { metalError ?? statusNote }
 
     func prepare(device: MTLDevice, colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat) {
         do {
@@ -85,7 +91,7 @@ final class MapGPUState {
                 device: device,
                 library: library,
                 vertexName: MapShaders.vertexFunction,
-                fragmentName: MapShaders.fragmentFunction,
+                fragmentName: MapShaders.tileFragmentFunction,
                 vertexDescriptor: MapShaders.tileVertexDescriptor(),
                 colorFormat: colorFormat,
                 depthFormat: depthFormat,
@@ -107,7 +113,6 @@ final class MapGPUState {
             self.depthState = depthState
             guard let tileCorners = makeStaticBuffer(device: device, floats: Self.tileCornerFloats, label: "tile-corners"),
                   let spriteCorners = makeStaticBuffer(device: device, floats: Self.spriteCornerFloats, label: "sprite-corners"),
-                  let palette = makeStaticBuffer(device: device, floats: MetatileColor.paletteComponents(), label: "metatile-palette"),
                   let uniformRing = SharedRingBuffer(device: device, bytes: 256, label: "uniforms"),
                   let gridRing = SharedRingBuffer(
                     device: device,
@@ -128,7 +133,6 @@ final class MapGPUState {
             }
             self.tileCorners = tileCorners
             self.spriteCorners = spriteCorners
-            self.palette = palette
             self.uniformRing = uniformRing
             self.gridRing = gridRing
             self.markerRing = markerRing
@@ -156,7 +160,6 @@ final class MapGPUState {
               let depthState,
               let tileCorners,
               let spriteCorners,
-              let palette,
               let uniformRing,
               let gridRing,
               let markerRing,
@@ -183,13 +186,15 @@ final class MapGPUState {
 
         let cells = grid?.cellCount ?? 0
         let canDraw = cells > 0 && uniforms.viewportWidth > 1 && uniforms.viewportHeight > 1 && uniforms.pointsPerMetatile > 0
-        if canDraw {
+        if canDraw && texturedGround, let indexAtlas, let paletteRGB555, let metatileTable {
             encoder.setRenderPipelineState(tilePipeline)
             encoder.setDepthStencilState(depthState)
             encoder.setVertexBuffer(tileCorners, offset: 0, index: 0)
             encoder.setVertexBuffer(uniformRing.buffers[slot], offset: 0, index: 1)
             encoder.setVertexBuffer(gridRing.buffers[slot], offset: 0, index: 2)
-            encoder.setVertexBuffer(palette, offset: 0, index: 3)
+            encoder.setFragmentTexture(indexAtlas, index: 0)
+            encoder.setFragmentBuffer(paletteRGB555, offset: 0, index: 0)
+            encoder.setFragmentBuffer(metatileTable, offset: 0, index: 1)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: cells)
         }
 
@@ -286,6 +291,109 @@ final class MapGPUState {
         dirty.markClean(slot)
     }
 
+    func setTexturedGround(_ enabled: Bool) {
+        texturedGround = enabled && tilesetReady
+    }
+
+    func setStatusNote(_ note: String?) {
+        statusNote = note
+    }
+
+    func failTileset(_ detail: String) {
+        tilesetReady = false
+        texturedGround = false
+        statusNote = "Shared tileset upload failed. \(detail)"
+    }
+
+    /// Copies the index atlas into a `MTLStorageModeShared` buffer and views it
+    /// as an r8Uint texture. Palette and metatile entries are shared buffers.
+    /// Row stride follows `minimumLinearTextureAlignment`. There is no managed blit.
+    func uploadTileset(_ graphics: GBATileset, device: MTLDevice) -> Bool {
+        guard graphics.atlasWidth == GBATileset.atlasWidth,
+              graphics.atlasHeight == GBATileset.atlasHeight,
+              graphics.indices.count == graphics.atlasWidth * graphics.atlasHeight else {
+            failTileset(
+                "Index atlas is \(graphics.indices.count) bytes for \(graphics.atlasWidth)×\(graphics.atlasHeight); expected \(GBATileset.atlasWidth)×\(GBATileset.atlasHeight)."
+            )
+            return false
+        }
+        guard graphics.paletteRGB555.count == GBATileset.paletteBanks * GBATileset.colorsPerPalette else {
+            failTileset("RGB555 palette has \(graphics.paletteRGB555.count) colors.")
+            return false
+        }
+        guard graphics.metatileEntries.count == GBATileset.metatileCount * GBATileset.tilesPerMetatile else {
+            failTileset("Metatile table has \(graphics.metatileEntries.count) entries.")
+            return false
+        }
+
+        let alignment = max(device.minimumLinearTextureAlignment(for: .r8Uint), 1)
+        let rowBytes = ((graphics.atlasWidth + alignment - 1) / alignment) * alignment
+        let length = rowBytes * graphics.atlasHeight
+        guard let buffer = device.makeBuffer(length: length, options: [.storageModeShared]) else {
+            failTileset("Could not allocate a \(length)-byte shared index buffer.")
+            return false
+        }
+        buffer.label = "tileset-indices"
+        buffer.contents().initializeMemory(as: UInt8.self, repeating: 0, count: length)
+        let copied = graphics.indices.withUnsafeBytes { raw -> Bool in
+            guard let base = raw.baseAddress else { return false }
+            for row in 0..<graphics.atlasHeight {
+                let destination = buffer.contents().advanced(by: row * rowBytes)
+                destination.copyMemory(from: base.advanced(by: row * graphics.atlasWidth), byteCount: graphics.atlasWidth)
+            }
+            return true
+        }
+        guard copied else {
+            failTileset("Could not read the index atlas bytes.")
+            return false
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .r8Uint,
+            width: graphics.atlasWidth,
+            height: graphics.atlasHeight,
+            mipmapped: false
+        )
+        descriptor.storageMode = .shared
+        descriptor.usage = [.shaderRead]
+        guard let texture = buffer.makeTexture(descriptor: descriptor, offset: 0, bytesPerRow: rowBytes) else {
+            failTileset(
+                "Could not create a shared r8Uint texture view (\(graphics.atlasWidth)×\(graphics.atlasHeight), row \(rowBytes), alignment \(alignment))."
+            )
+            return false
+        }
+        texture.label = "tileset-indices"
+
+        let paletteBytes = graphics.paletteRGB555.count * MemoryLayout<UInt16>.stride
+        guard let palette = graphics.paletteRGB555.withUnsafeBytes({ raw -> MTLBuffer? in
+            guard let base = raw.baseAddress else { return nil }
+            return device.makeBuffer(bytes: base, length: paletteBytes, options: [.storageModeShared])
+        }) else {
+            failTileset("Could not allocate the shared RGB555 palette buffer.")
+            return false
+        }
+        palette.label = "tileset-rgb555"
+
+        let tableBytes = graphics.metatileEntries.count * MemoryLayout<UInt16>.stride
+        guard let table = graphics.metatileEntries.withUnsafeBytes({ raw -> MTLBuffer? in
+            guard let base = raw.baseAddress else { return nil }
+            return device.makeBuffer(bytes: base, length: tableBytes, options: [.storageModeShared])
+        }) else {
+            failTileset("Could not allocate the shared metatile table.")
+            return false
+        }
+        table.label = "metatile-entries"
+
+        indexAtlasBuffer = buffer
+        indexAtlas = texture
+        paletteRGB555 = palette
+        metatileTable = table
+        tilesetReady = true
+        texturedGround = true
+        statusNote = nil
+        return true
+    }
+
     private func failUpload(_ detail: String) {
         uploadFailed = true
         metalError = "Shared ring upload failed. \(detail)"
@@ -332,14 +440,10 @@ final class MapGPUState {
         return buffer
     }
 
-    private static let tileCornerFloats: [Float] = {
-        let inset = MapGeometry.tileInset
-        let outer = 1 - inset
-        return [
-            inset, inset, outer, inset, outer, outer,
-            inset, inset, outer, outer, inset, outer,
-        ]
-    }()
+    private static let tileCornerFloats: [Float] = [
+        0, 0, 1, 0, 1, 1,
+        0, 0, 1, 1, 0, 1,
+    ]
 
     private static let spriteCornerFloats: [Float] = [
         -1, -1, 1, -1, 1, 1,

@@ -1,6 +1,6 @@
 # pixel_pipeline
 
-Standalone CLI that turns a PNG into GBA **4bpp** tiles and an **RGB555** palette. It lives entirely under `tools/pixel_pipeline/` and does not link Metal, the Shuverse editor, or the map model. The editor still draws fake metatile colors; these binaries are not on the render path.
+Standalone CLI that turns a PNG into GBA **4bpp** tiles and an **RGB555** palette. It lives entirely under `tools/pixel_pipeline/` and does not link Metal, the Shuverse editor, or the map model. The Pallet Town canvas consumes this `.4bpp` layout and the same 32-byte `.pal` layout (see `ShuverseEditor/Samples/tilesets/pallet_town/ORIGIN.txt`). The CLI is not linked into the app.
 
 ## Build and test
 

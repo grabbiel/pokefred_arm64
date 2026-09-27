@@ -1,6 +1,6 @@
 # Shuverse Editor
 
-Native Apple Silicon map editor for the Shuverse Editor Suite. The app is Swift, AppKit, and Metal (`MTKView`). It loads Map Parser JSON into `EditorDocument` / `MapDocument` / `MapCell` and draws each metatile in a stable fake color. Real tileset pixels are intentionally not in this version.
+Native Apple Silicon map editor for the Shuverse Editor Suite. The app is Swift, AppKit, and Metal (`MTKView`). It loads Map Parser JSON into `EditorDocument` / `MapDocument` / `MapCell` and draws Pallet Town from GBA 4bpp tiles and RGB555 palettes.
 
 Pallet Town (`Samples/PalletTown.json`) is a 24×20 metatile map (384×320 px).
 
@@ -65,5 +65,4 @@ GPU notes (shared grid, triple-buffering, depth, tile-shader overlays): [docs/me
 - Scroll wheel, pinch, or ⌘-scroll to zoom toward the pointer. Menu or `+` / `-` zoom about the center. `0` or `f` fits the map. Arrow keys pan.
 - The inspector shows metatile id, map attribute, packed `u16`, and any object, warp, trigger, or sign on that cell.
 - Marker colors: white object, gold warp, cyan trigger, orange sign. The gold outline is the selection.
-
-Fake colors are a function of metatile id only. They stay put across runs so the town layout is readable before tileset parse exists.
+- Pallet Town ground pixels come from `Samples/tilesets/pallet_town/` (primary + secondary `.4bpp`, 32-byte RGB555 `.pal` banks, pret `metatiles.bin`). Rebuild with `Scripts/bake_pallet_town_tiles.py`. `MetatileColor` is not uploaded.

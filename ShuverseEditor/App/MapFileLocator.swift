@@ -10,6 +10,30 @@ enum MapFileLocator {
         return palletTownURL()
     }
 
+    static func palletTownTilesetDirectory() -> URL? {
+        let roots = [
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+            URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent(),
+        ]
+        if let found = TilesetLocator.find(startingAt: roots) {
+            return found
+        }
+        let subdirectories = [
+            "Resources/tilesets/pallet_town",
+            "tilesets/pallet_town",
+        ]
+        for subdirectory in subdirectories {
+            if let url = Bundle.module.url(
+                forResource: "primary",
+                withExtension: "4bpp",
+                subdirectory: subdirectory
+            ) {
+                return url.deletingLastPathComponent()
+            }
+        }
+        return nil
+    }
+
     static func palletTownURL() -> URL? {
         if let found = findSample() {
             return found

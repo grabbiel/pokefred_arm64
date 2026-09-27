@@ -1,0 +1,35 @@
+Pallet Town sample tiles for the Metal canvas.
+
+Sources (pret/pokefirered):
+  data/tilesets/primary/general/tiles.png
+  data/tilesets/primary/general/metatiles.bin
+  data/tilesets/primary/general/palettes/00.pal … 15.pal
+  data/tilesets/secondary/pallet_town/tiles.png
+  data/tilesets/secondary/pallet_town/metatiles.bin
+  data/tilesets/secondary/pallet_town/palettes/00.pal … 15.pal
+
+Produced by ShuverseEditor/Scripts/bake_pallet_town_tiles.py.
+
+4bpp (pixel_pipeline, GBATEK nibble order, 32 bytes per 8×8 tile):
+  tools/pixel_pipeline/build/pixel_pipeline <tiles.png> primary.4bpp primary.gray.pal
+  tools/pixel_pipeline/build/pixel_pipeline <tiles.png> secondary.4bpp secondary.gray.pal
+  primary.4bpp   20480 bytes  sha256 0e69da87ae43c973edd81c5e16be0185f561257d04300e7977b5ae2f0377c97f
+  secondary.4bpp 2560 bytes  sha256 6753f0f9e380a945e68b95a73b976c836612c99137361033f0023c2a16990a37
+
+The gray .pal files are the tiles.png ramps (16 grays). They are not copied
+here and the editor does not sample them.
+
+RGB555 banks (pixel_pipeline .pal layout, one 32-byte file per bank):
+  palettes/primary/00.pal … 15.pal
+  palettes/secondary/00.pal … 15.pal
+  c5 = (c8 * 32) >> 8, little-endian 0bbbbbgggggrrrrr, index 0 transparent.
+
+Metatiles (pret, not a pixel_pipeline format):
+  primary.metatiles.bin   10240 bytes  640 metatiles
+  secondary.metatiles.bin 1424 bytes
+  Each metatile is 8 little-endian u16 screen entries (bottom 2×2, then top 2×2):
+    bits 0–9 tile id, bit 10 hflip, bit 11 vflip, bits 12–15 palette.
+
+The canvas places primary tiles at ids 0–639 and secondary tiles at 640+,
+and builds BG palettes the way pret does: primary banks 0–6 (color 0 forced
+black) and secondary banks 7–12 in slots 7–12.

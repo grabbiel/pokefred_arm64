@@ -6,6 +6,7 @@ enum MapShaders {
     static let vertexFunction = "map_vertex"
     static let spriteVertexFunction = "map_sprite_vertex"
     static let fragmentFunction = "map_fragment"
+    static let tileFragmentFunction = "map_tile_fragment"
     static let tileFunction = "map_tile_overlay"
 
     static func compileOptions() -> MTLCompileOptions {
@@ -62,9 +63,10 @@ enum MapShaders {
 
     /// MSL compiled at runtime with `makeLibrary(source:)`. CI extracts this
     /// string and runs `metal -c`. `Uniforms` is `MapGPUUniforms` (64 bytes).
-    /// Vertex and fragment inputs use `[[stage_in]]`. `map_tile_overlay` is
-    /// kept for a future imageblock path. macOS does not attach it: the tile
-    /// render-pipeline APIs are not used by this app.
+    /// Vertex and fragment inputs use `[[stage_in]]`. Ground fragments sample
+    /// a shared r8Uint index atlas and an RGB555 palette. `map_tile_overlay`
+    /// is kept for a future imageblock path. macOS does not attach it: the
+    /// tile render-pipeline APIs are not used by this app.
     static let source = """
     #include <metal_stdlib>
     using namespace metal;
@@ -103,7 +105,13 @@ enum MapShaders {
     struct Varying {
         float4 position [[position]];
         float4 color;
+        float2 tileUV;
+        float metatileId;
     };
+
+    constant uint AtlasTilesPerRow = 16u;
+    constant uint MetatilePixels = 16u;
+    constant uint TilePixels = 8u;
 
     constant uint OverlaySelection = 1u;
     constant uint OverlayCollision = 2u;
@@ -122,7 +130,6 @@ enum MapShaders {
         TileIn in [[stage_in]],
         constant Uniforms &u [[buffer(1)]],
         const device uint *grid [[buffer(2)]],
-        const device float4 *palette [[buffer(3)]],
         uint instanceID [[instance_id]]
     ) {
         uint width = max(u.gridWidth, 1u);
@@ -133,7 +140,9 @@ enum MapShaders {
         float2 world = float2(float(x), float(y)) + in.corner;
         Varying out;
         out.position = float4(world_to_ndc(world, u), u.groundDepth, 1.0);
-        out.color = palette[metatileId];
+        out.color = float4(1.0);
+        out.tileUV = in.corner;
+        out.metatileId = float(metatileId);
         return out;
     }
 
@@ -145,11 +154,55 @@ enum MapShaders {
         Varying out;
         out.position = float4(world_to_ndc(world, u), in.layerDepth, 1.0);
         out.color = in.color;
+        out.tileUV = float2(0.0);
+        out.metatileId = 0.0;
         return out;
     }
 
     fragment float4 map_fragment(Varying in [[stage_in]]) {
         return in.color;
+    }
+
+    // Quadrant, flip, and index-0 rules match GBATileset.sample.
+    fragment float4 map_tile_fragment(
+        Varying in [[stage_in]],
+        texture2d<uint, access::read> indices [[texture(0)]],
+        const device ushort *palette [[buffer(0)]],
+        const device ushort *metatiles [[buffer(1)]]
+    ) {
+        float2 local = clamp(in.tileUV, 0.0, 0.9999);
+        uint x = min(uint(local.x * float(MetatilePixels)), MetatilePixels - 1u);
+        uint y = min(uint(local.y * float(MetatilePixels)), MetatilePixels - 1u);
+        uint tx = x / TilePixels;
+        uint ty = y / TilePixels;
+        uint metatileId = min(uint(in.metatileId + 0.5), 1023u);
+        float4 color = float4(0.0);
+        for (uint layer = 0u; layer < 2u; layer++) {
+            uint slot = layer * 4u + ty * 2u + tx;
+            uint raw = uint(metatiles[metatileId * 8u + slot]);
+            uint tileId = raw & 1023u;
+            uint px = x % TilePixels;
+            uint py = y % TilePixels;
+            if (((raw >> 10u) & 1u) != 0u) {
+                px = (TilePixels - 1u) - px;
+            }
+            if (((raw >> 11u) & 1u) != 0u) {
+                py = (TilePixels - 1u) - py;
+            }
+            uint pal = (raw >> 12u) & 15u;
+            uint ax = (tileId % AtlasTilesPerRow) * TilePixels + px;
+            uint ay = (tileId / AtlasTilesPerRow) * TilePixels + py;
+            uint index = indices.read(uint2(ax, ay)).r;
+            if (index == 0u) {
+                continue;
+            }
+            uint packed = uint(palette[pal * 16u + index]);
+            float r = float(packed & 31u) / 31.0;
+            float g = float((packed >> 5u) & 31u) / 31.0;
+            float b = float((packed >> 10u) & 31u) / 31.0;
+            color = float4(r, g, b, 1.0);
+        }
+        return color;
     }
 
     struct TilePixel {

@@ -46,7 +46,8 @@ Opening a connection or warp loads (or focuses) another `MapDocument` into `maps
 | raw packing | `UInt16` | `(mapAttribute << 10) \| metatileId` |
 
 ### `TilesetRef` / shared `Tileset`
-- Primary/secondary symbols; atlas + RGB555 palettes live once in `EditorDocument.sharedTilesets`.
+- Primary/secondary symbols. `EditorDocument.sharedTilesets` dedupes those ids.
+- Pallet Town's atlas is not stored on `Tileset`. The canvas loads `GBATileset` from `Samples/tilesets/pallet_town/` (4bpp indices, RGB555 banks, metatile screen entries). See [metal_gpu.md](metal_gpu.md).
 
 ### Events
 - `ObjectEvent`, `WarpEvent`, `CoordEvent`, `BgEvent`, `Connection` keep pret `map.json` field names for round-trip.
@@ -60,8 +61,8 @@ Opening a connection or warp loads (or focuses) another `MapDocument` into `maps
 
 ## GPU upload
 
-The canvas uploads `MapMetatileGrid`: one `UInt32` per cell, low 16 bits `MapCell.raw`. It does not expand each cell into six vertices when the selection changes. Markers and the selection outline are small quad-instance lists. See [metal_gpu.md](metal_gpu.md).
+The canvas uploads `MapMetatileGrid`: one `UInt32` per cell, low 16 bits `MapCell.raw`. It does not expand each cell into six vertices when the selection changes. Markers and the selection outline are small quad-instance lists. Pallet Town's ground fragment samples the shared 4bpp atlas and RGB555 palette instead of a per-id color. See [metal_gpu.md](metal_gpu.md).
 
 ## Non-goals for v1
 - No live C rewrite yet.
-- Canvas may fake-color by `metatileId` until tileset parse lands.
+- `MetatileColor` is not the Pallet Town draw path. Other maps do not invent tiles.

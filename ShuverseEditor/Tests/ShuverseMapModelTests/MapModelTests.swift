@@ -136,6 +136,19 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(sample, bundled)
         XCTAssertEqual(sample.count, bundled.count)
         XCTAssertGreaterThan(sample.count, 0)
+
+        let sampleTiles = packageRoot().appendingPathComponent("Samples/tilesets/pallet_town")
+        let bundledTiles = packageRoot().appendingPathComponent("App/Resources/tilesets/pallet_town")
+        let relative = try relativeFiles(in: sampleTiles)
+        XCTAssertEqual(try relativeFiles(in: bundledTiles), relative)
+        XCTAssertTrue(relative.contains("primary.4bpp"))
+        XCTAssertTrue(relative.contains("palettes/primary/00.pal"))
+        XCTAssertTrue(relative.contains("palettes/secondary/11.pal"))
+        for path in relative {
+            let left = try Data(contentsOf: sampleTiles.appendingPathComponent(path))
+            let right = try Data(contentsOf: bundledTiles.appendingPathComponent(path))
+            XCTAssertEqual(left, right, path)
+        }
     }
 
     func testSharedGridCoversPalletTownWithoutVertexRemesh() throws {
@@ -302,11 +315,143 @@ final class MapModelTests: XCTestCase {
         XCTAssertFalse(gpu.contains("assertionFailure"))
         XCTAssertTrue(canvas.contains("assertionFailure"))
         XCTAssertTrue(gpu.contains("Shared ring upload failed"))
+        XCTAssertTrue(gpu.contains("Shared tileset upload failed"))
+        XCTAssertTrue(gpu.contains(".r8Uint"))
+        XCTAssertTrue(gpu.contains("minimumLinearTextureAlignment"))
+        XCTAssertTrue(gpu.contains("makeTexture"))
+        XCTAssertTrue(gpu.contains("tileset-rgb555"))
+        XCTAssertTrue(gpu.contains("tileset-indices"))
+        XCTAssertFalse(gpu.contains("MetatileColor"))
+        XCTAssertFalse(gpu.contains("storageModeManaged"))
+        XCTAssertFalse(gpu.contains("didModifyRange"))
+        XCTAssertTrue(shaders.contains("fragment float4 map_tile_fragment"))
+        XCTAssertTrue(shaders.contains("texture2d<uint, access::read>"))
+        XCTAssertTrue(shaders.contains("const device ushort *palette"))
+        XCTAssertTrue(shaders.contains("constant uint AtlasTilesPerRow = 16u;"))
+        XCTAssertTrue(shaders.contains("palette[pal * 16u + index]"))
+        XCTAssertFalse(shaders.contains("palette[metatileId]"))
+        XCTAssertEqual(GBATileset.atlasTilesPerRow, 16)
         XCTAssertFalse(gpu.contains("dispatchThreadsPerTile"))
         XCTAssertFalse(gpu.contains("MTLTileRenderPipelineDescriptor"))
         XCTAssertFalse(gpu.contains("tileFunction"))
         XCTAssertFalse(canvas.contains("dispatchThreadsPerTile"))
         XCTAssertFalse(gpu.contains("GLFW"))
+    }
+
+    func testRGB555AndNibbleOrderMatchPixelPipeline() {
+        XCTAssertEqual(RGB555.pack(r8: 0, g8: 0, b8: 0), 0)
+        XCTAssertEqual(RGB555.pack(r8: 255, g8: 0, b8: 0), 31)
+        XCTAssertEqual(RGB555.pack(r8: 0, g8: 255, b8: 0), 31 << 5)
+        XCTAssertEqual(RGB555.pack(r8: 0, g8: 0, b8: 255), 31 << 10)
+        XCTAssertEqual(RGB555.pack(r8: 189, g8: 255, b8: 139), 0x47F7)
+        let green = RGB555.components(of: 0x47F7)
+        XCTAssertEqual(green.r, Float(23) / 31, accuracy: 0.0001)
+        XCTAssertEqual(green.g, 1, accuracy: 0.0001)
+        XCTAssertEqual(green.b, Float(17) / 31, accuracy: 0.0001)
+        XCTAssertEqual(GBA4bpp.index(byte: 0x21, x: 0), 1)
+        XCTAssertEqual(GBA4bpp.index(byte: 0x21, x: 1), 2)
+        XCTAssertEqual(GBAScreenEntry(raw: 0xB681).tileId, 641)
+        XCTAssertTrue(GBAScreenEntry(raw: 0xB681).flipX)
+        XCTAssertFalse(GBAScreenEntry(raw: 0xB681).flipY)
+        XCTAssertEqual(GBAScreenEntry(raw: 0xB681).palette, 11)
+        XCTAssertEqual(GBAScreenEntry(raw: 0xB681).raw, 0xB681)
+    }
+
+    func testCombinedPaletteUsesPalletTownBanks() throws {
+        var primary = Array(repeating: Array(repeating: UInt16(0xFFFF), count: 16), count: 16)
+        var secondary = Array(repeating: Array(repeating: UInt16(0x1111), count: 16), count: 16)
+        primary[0][0] = 0x7FFF
+        secondary[11][6] = 0x6393
+        let palette = try GBATileset.combinedPalette(primary: primary, secondary: secondary)
+        XCTAssertEqual(palette.count, 256)
+        XCTAssertEqual(palette[0], 0)
+        XCTAssertEqual(palette[1], 0xFFFF)
+        XCTAssertEqual(palette[6 * 16 + 4], 0xFFFF)
+        XCTAssertEqual(palette[7 * 16], 0x1111)
+        XCTAssertEqual(palette[11 * 16 + 6], 0x6393)
+        XCTAssertEqual(palette[13 * 16], 0)
+    }
+
+    func testSampleRespectsFlipAndTransparentIndex() {
+        var indices = [UInt8](repeating: 0, count: GBATileset.atlasWidth * GBATileset.atlasHeight)
+        func paint(tileId: Int, x: Int, y: Int, index: UInt8) {
+            let column = tileId % GBATileset.atlasTilesPerRow
+            let row = tileId / GBATileset.atlasTilesPerRow
+            indices[(row * 8 + y) * GBATileset.atlasWidth + column * 8 + x] = index
+        }
+        // Tile 0 stays empty so a zero screen entry does not cover the layer under it.
+        paint(tileId: 4, x: 0, y: 0, index: 1)
+        paint(tileId: 4, x: 7, y: 0, index: 2)
+        paint(tileId: 1, x: 0, y: 0, index: 3)
+        paint(tileId: 2, x: 0, y: 0, index: 0)
+        paint(tileId: 2, x: 1, y: 0, index: 4)
+
+        var palette = [UInt16](repeating: 0, count: 256)
+        palette[1] = 31
+        palette[2] = 31 << 5
+        palette[3] = 31 << 10
+        palette[4] = 31 | (31 << 5)
+
+        var entries = [UInt16](repeating: 0, count: GBATileset.metatileCount * GBATileset.tilesPerMetatile)
+        entries[0] = GBAScreenEntry(tileId: 4, flipX: true, flipY: false, palette: 0).raw
+        entries[8] = GBAScreenEntry(tileId: 1, flipX: false, flipY: false, palette: 0).raw
+        entries[12] = GBAScreenEntry(tileId: 2, flipX: false, flipY: false, palette: 0).raw
+
+        let tileset = GBATileset(
+            atlasWidth: GBATileset.atlasWidth,
+            atlasHeight: GBATileset.atlasHeight,
+            indices: indices,
+            paletteRGB555: palette,
+            metatileEntries: entries
+        )
+        let flippedLeft = tileset.sample(metatileId: 0, x: 0, y: 0)
+        XCTAssertEqual(flippedLeft.g, 1, accuracy: 0.0001)
+        XCTAssertEqual(flippedLeft.a, 1, accuracy: 0.0001)
+        let flippedRight = tileset.sample(metatileId: 0, x: 7, y: 0)
+        XCTAssertEqual(flippedRight.r, 1, accuracy: 0.0001)
+        XCTAssertEqual(flippedRight.g, 0, accuracy: 0.0001)
+
+        let covered = tileset.sample(metatileId: 1, x: 0, y: 0)
+        XCTAssertEqual(covered.b, 1, accuracy: 0.0001)
+        XCTAssertEqual(covered.r, 0, accuracy: 0.0001)
+        let overlaid = tileset.sample(metatileId: 1, x: 1, y: 0)
+        XCTAssertEqual(overlaid.r, 1, accuracy: 0.0001)
+        XCTAssertEqual(overlaid.g, 1, accuracy: 0.0001)
+    }
+
+    func testPalletTownTilesetDecodesRealPixels() throws {
+        let directory = try XCTUnwrap(TilesetLocator.find(startingAt: [packageRoot()]))
+        let tileset = try GBATileset.loadPalletTown(from: directory)
+        XCTAssertEqual(tileset.atlasWidth, 128)
+        XCTAssertEqual(tileset.atlasHeight, 512)
+        XCTAssertEqual(tileset.indices.count, 128 * 512)
+        XCTAssertEqual(tileset.paletteRGB555.count, 256)
+        XCTAssertEqual(tileset.metatileEntries.count, 1024 * 8)
+        XCTAssertEqual(tileset.paletteRGB555[0], 0)
+        XCTAssertEqual(tileset.paletteRGB555[1], 0x47F7)
+        XCTAssertEqual(tileset.paletteRGB555[11 * 16], 0x7C1F)
+        XCTAssertEqual(tileset.metatileEntries[28 * 8], 0x29)
+        XCTAssertEqual(tileset.metatileEntries[29 * 8 + 6], 0x437)
+        XCTAssertEqual(tileset.metatileEntries[678 * 8], 0xB281)
+
+        let grass = tileset.sample(metatileId: 28, x: 5, y: 0)
+        let expected = RGB555.components(of: 0x47F7)
+        XCTAssertEqual(grass.r, expected.r, accuracy: 0.0001)
+        XCTAssertEqual(grass.g, expected.g, accuracy: 0.0001)
+        XCTAssertEqual(grass.b, expected.b, accuracy: 0.0001)
+        XCTAssertEqual(grass.a, 1, accuracy: 0.0001)
+
+        let shade = tileset.sample(metatileId: 28, x: 4, y: 4)
+        let shadeExpected = RGB555.components(of: 0x3350)
+        XCTAssertEqual(shade.r, shadeExpected.r, accuracy: 0.0001)
+        XCTAssertEqual(shade.g, shadeExpected.g, accuracy: 0.0001)
+        XCTAssertEqual(shade.b, shadeExpected.b, accuracy: 0.0001)
+
+        let roof = tileset.sample(metatileId: 678, x: 4, y: 4)
+        XCTAssertEqual(roof.a, 1, accuracy: 0.0001)
+        XCTAssertGreaterThan(roof.r, 0.5)
+        XCTAssertTrue(GBATileset.supports(TilesetRef(primary: "gTileset_General", secondary: "gTileset_PalletTown")))
+        XCTAssertFalse(GBATileset.supports(TilesetRef(primary: "gTileset_General", secondary: "gTileset_ViridianCity")))
     }
 
     func testCameraHitTestPanAndZoom() throws {
@@ -336,6 +481,23 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(fitted.pointsPerMetatile, 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originX, -40 / 30, accuracy: 0.001)
         XCTAssertEqual(fitted.originY, 0, accuracy: 0.001)
+    }
+
+    private func relativeFiles(in directory: URL) throws -> [String] {
+        let root = directory.standardizedFileURL.path
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var files: [String] = []
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else { continue }
+            let path = url.standardizedFileURL.path
+            XCTAssertTrue(path.hasPrefix(root))
+            let relative = String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            files.append(relative)
+        }
+        return files.sorted()
     }
 
     private func loadPalletTown() throws -> MapDocument {
