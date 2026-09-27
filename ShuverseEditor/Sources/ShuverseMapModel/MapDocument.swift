@@ -114,6 +114,18 @@ public struct MapDocument: Equatable {
         return cells[index]
     }
 
+    /// Writes `metatileId` and keeps the cell's map attribute. No change when
+    /// the id already matches or the coordinate is outside the map.
+    @discardableResult
+    public mutating func paintMetatile(x: Int, y: Int, metatileId: UInt16) -> Bool {
+        guard let index = cellIndex(x: x, y: y), cells.indices.contains(index) else { return false }
+        let painted = MapCell(metatileId: metatileId, mapAttribute: cells[index].mapAttribute)
+        guard cells[index].metatileId != painted.metatileId else { return false }
+        cells[index] = painted
+        dirty.cells = true
+        return true
+    }
+
     public func inspection(x: Int, y: Int) -> CellInspection? {
         guard let cell = cell(x: x, y: y) else { return nil }
         return CellInspection(

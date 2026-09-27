@@ -67,7 +67,7 @@ A transparent `MTKView` covers the window and draws Dear ImGui panels: **Map Lis
 - Inspector shows the same cell and event text as before (metatile id, attribute, packed `u16`, object / warp / trigger / sign).
 - Events lists objects, warps, triggers, and signs from the active map. Click a row to show that event and to point the inspector at its cell. The list is read-only.
 - Status shows zoom, pan, the selected cell, and the renderer note.
-- Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to store that id on `EditorDocument.brushMetatileId`. The click does not paint. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
+- Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to store that id on `EditorDocument.brushMetatileId`. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
 
 Drag a tab or splitter to rearrange docks for the session. The layout is not written to an ini file.
 
@@ -77,7 +77,7 @@ The overlay’s `hitTest` asks ImGui whether the cursor is on a panel, tab, or s
 
 GPU notes (shared grid, triple-buffering, depth, tile-shader overlays): [docs/metal_gpu.md](../docs/metal_gpu.md). The dock overlay does not change that pass.
 
-- Drag to pan. A short click inspects the metatile under the cursor.
+- Drag to pan. A short click inspects the metatile under the cursor. When a brush metatile is selected, that same click writes it into the cell, keeps the map attribute, and marks the map dirty so the grid reloads. With no brush, the click only inspects.
 - Scroll wheel, pinch, or ⌘-scroll to zoom toward the pointer. Menu or `+` / `-` zoom about the center. `0` or `f` fits the map. Arrow keys pan.
 - Marker colors: white object, gold warp, cyan trigger, orange sign. The gold outline is the selection.
 - Pallet Town ground pixels come from `Samples/tilesets/pallet_town/` (primary + secondary `.4bpp`, 32-byte RGB555 `.pal` banks, pret `metatiles.bin`). Formats match `tools/pixel_pipeline/CONTRACT.md`. Rebuild with `Scripts/bake_pallet_town_tiles.py`. `MetatileColor` is not uploaded.

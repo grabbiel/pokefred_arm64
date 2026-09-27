@@ -90,6 +90,32 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         onCameraChange?(statusLine())
     }
 
+    /// Reloads cells from `map` and marks the existing grid rings dirty.
+    /// Camera and the current cell selection stay put. `setMap` is the full
+    /// replace, which clears that selection.
+    func replaceCells(_ map: MapDocument) {
+        let kept = selection
+        self.map = map
+        grid = MapMetatileGrid.make(map: map)
+        canopy = MapDrawListBuilder.canopy(on: map)
+        sprites = MapDrawListBuilder.sprites(on: map)
+        markers = MapDrawListBuilder.markers(on: map)
+        if let kept, map.contains(x: kept.x, y: kept.y) {
+            selection = kept
+            selectionInstances = MapDrawListBuilder.selection(x: kept.x, y: kept.y, on: map)
+        } else {
+            selection = nil
+            selectionInstances = []
+        }
+        gridDirty.markAllDirty()
+        canopyDirty.markAllDirty()
+        spriteDirty.markAllDirty()
+        markerDirty.markAllDirty()
+        selectionDirty.markAllDirty()
+        needsDisplay = true
+        onCameraChange?(statusLine())
+    }
+
     func statusLine() -> String {
         guard let map else { return "No map" }
         var text = "\(map.name)   \(map.size.width)×\(map.size.height)   "

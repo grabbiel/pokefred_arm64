@@ -63,6 +63,20 @@ final class EditorWindowController: NSWindowController {
         }
     }
 
+    private func inspect(_ inspection: CellInspection?) {
+        guard let inspection else {
+            selection = nil
+            return
+        }
+        if editorDocument.paintBrush(x: inspection.x, y: inspection.y),
+           let map = editorDocument.activeMap {
+            canvas.replaceCells(map)
+            selection = map.inspection(x: inspection.x, y: inspection.y)
+        } else {
+            selection = inspection
+        }
+    }
+
     func focusMap(id: String) {
         guard editorDocument.focus(mapId: id) else { return }
         selection = nil
@@ -108,7 +122,7 @@ final class EditorWindowController: NSWindowController {
             self?.openMap(at: url)
         }
         canvas.onInspect = { [weak self] inspection in
-            self?.selection = inspection
+            self?.inspect(inspection)
         }
         canvas.onCameraChange = { [weak self] line in
             self?.cameraLine = line

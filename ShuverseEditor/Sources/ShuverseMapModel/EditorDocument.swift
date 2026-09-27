@@ -8,7 +8,7 @@ public struct EditorDocument: Codable, Equatable {
     public var activeMapId: String?
     public var sharedTilesets: [String: Tileset]
     public var dirtyMaps: Set<String>
-    /// Metatile chosen in the tileset dock. Selection only; cells stay unchanged.
+    /// Metatile chosen in the tileset dock. `paintBrush` writes it into a cell.
     public var brushMetatileId: UInt16?
 
     public init(
@@ -32,6 +32,23 @@ public struct EditorDocument: Codable, Equatable {
     public mutating func selectBrush(metatileId: Int) -> Bool {
         guard (0..<GBATileset.metatileCount).contains(metatileId) else { return false }
         brushMetatileId = UInt16(metatileId)
+        return true
+    }
+
+    /// Paints `brushMetatileId` into the active map. Keeps the cell attribute.
+    /// Returns false when no brush is set, the cell is outside the map, or the
+    /// id is already there. A real edit marks the map dirty.
+    @discardableResult
+    public mutating func paintBrush(x: Int, y: Int) -> Bool {
+        guard let metatileId = brushMetatileId,
+              let activeMapId,
+              let index = maps.firstIndex(where: { $0.mapId == activeMapId }) else {
+            return false
+        }
+        guard maps[index].paintMetatile(x: x, y: y, metatileId: metatileId) else {
+            return false
+        }
+        dirtyMaps.insert(activeMapId)
         return true
     }
 
