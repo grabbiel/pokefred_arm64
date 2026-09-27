@@ -50,3 +50,18 @@ Until 4bpp asset writes land, the Python `tools/serialize_map.py` `map.bin` path
 - No script/C regeneration beyond map JSON + layout bins.
 - No auto-commit; user commits.
 - No multi-map atomic transaction across repos; best-effort per map with rollback of that map’s temps.
+
+### Python reference (`tools/serialize_map.py`)
+- Default mode is dry-run (compare only). Pass `--write` to atomically write
+  `map.bin`, `border.bin`, and `map.json` (`*.tmp` → fsync → rename).
+- `border.bin`: LE `u16` same packing as `map.bin`; size `border_width *
+  border_height` from `layouts.json`. Arrays come from `doc["border"]` when
+  present; otherwise the existing on-disk `border.bin` is unpacked and
+  re-packed (identity when the parser omitted border).
+- `map.json`: merge parsed header/events/connections into the existing pret
+  file, preserving unknown top-level keys and per-event fields the parser
+  dropped (e.g. `movement_range_*`, `trainer_*`). Dump is `json.dumps(...,
+  indent=2) + "\n"` (pret style; byte-stable on reload when order is kept).
+- Empty indoor `connections` stay `null` when pret stored null (not `[]`),
+  so round-trip stays byte-identical.
+- Refuse git-dirty targets unless `--force`.
