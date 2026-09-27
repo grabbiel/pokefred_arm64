@@ -78,6 +78,9 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/viridian_gym_tiles.png $(BUILD)/cli_viridian_gym.4bpp $(BUILD)/cli_viridian_gym.pal
 	cmp $(BUILD)/cli_viridian_gym.4bpp tests/golden/viridian_gym_tiles.4bpp
 	cmp $(BUILD)/cli_viridian_gym.pal tests/golden/viridian_gym_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/cerulean_gym_tiles.png $(BUILD)/cli_cerulean_gym.4bpp $(BUILD)/cli_cerulean_gym.pal
+	cmp $(BUILD)/cli_cerulean_gym.4bpp tests/golden/cerulean_gym_tiles.4bpp
+	cmp $(BUILD)/cli_cerulean_gym.pal tests/golden/cerulean_gym_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@

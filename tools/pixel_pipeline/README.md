@@ -12,7 +12,7 @@ make
 make test
 ```
 
-`make test` builds the CLI, the static library, and the tests, including the tanoby ruins, game corner, pallet town, mart, school, underground path, generic building 1, bike shop, saffron gym, and viridian gym goldens. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
+`make test` builds the CLI, the static library, and the tests, including the tanoby ruins, game corner, pallet town, mart, school, underground path, generic building 1, bike shop, saffron gym, viridian gym, and cerulean gym goldens. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
 
 GitHub Actions workflow `.github/workflows/shuverse-editor.yml`, job `pixel-pipeline`, runs on `ubuntu-latest` (Linux x86_64):
 
@@ -35,6 +35,7 @@ That job is scalar only. It does not run the NEON converters.
 ./build/pixel_pipeline testdata/bike_shop_tiles.png build/bike_shop.4bpp build/bike_shop.pal
 ./build/pixel_pipeline testdata/saffron_gym_tiles.png build/saffron_gym.4bpp build/saffron_gym.pal
 ./build/pixel_pipeline testdata/viridian_gym_tiles.png build/viridian_gym.4bpp build/viridian_gym.pal
+./build/pixel_pipeline testdata/cerulean_gym_tiles.png build/cerulean_gym.4bpp build/cerulean_gym.pal
 ```
 
 From the repo root the binary is `tools/pixel_pipeline/build/pixel_pipeline` after `make`. Output paths are chosen by the caller.
@@ -71,7 +72,7 @@ c5 &= 0x1F
 
 Index 0 is the transparent slot.
 
-- Indexed PNG with at most 16 unique PLTE entries and no `tRNS` alpha of 0: palette order is preserved. Index 0 is GBA color 0 (the PNG's first color), even when those pixels are opaque. `testdata/tanoby_ruins_tiles.png` (128×40, 16 grays), `testdata/game_corner_tiles.png` (128×88, 16 colors), `testdata/pallet_town_tiles.png` (128×40, 16 grays), `testdata/mart_tiles.png` (128×24, 16 grays), `testdata/school_tiles.png` (128×32, 16 grays), `testdata/underground_path_tiles.png` (128×32, 16 grays), `testdata/generic_building_1_tiles.png` (128×32, 16 grays), `testdata/bike_shop_tiles.png` (128×32, 16 grays), `testdata/saffron_gym_tiles.png` (128×48, 16 grays), and `testdata/viridian_gym_tiles.png` (128×48, 16 grays) are this case. None of these files has `tRNS`.
+- Indexed PNG with at most 16 unique PLTE entries and no `tRNS` alpha of 0: palette order is preserved. Index 0 is GBA color 0 (the PNG's first color), even when those pixels are opaque. `testdata/tanoby_ruins_tiles.png` (128×40, 16 grays), `testdata/game_corner_tiles.png` (128×88, 16 colors), `testdata/pallet_town_tiles.png` (128×40, 16 grays), `testdata/mart_tiles.png` (128×24, 16 grays), `testdata/school_tiles.png` (128×32, 16 grays), `testdata/underground_path_tiles.png` (128×32, 16 grays), `testdata/generic_building_1_tiles.png` (128×32, 16 grays), `testdata/bike_shop_tiles.png` (128×32, 16 grays), `testdata/saffron_gym_tiles.png` (128×48, 16 grays), `testdata/viridian_gym_tiles.png` (128×48, 16 grays), and `testdata/cerulean_gym_tiles.png` (128×64, 16 grays) are this case. None of these files has `tRNS`.
 - Indexed PNG with one or more `tRNS` alphas of 0: those pixels become index 0. Slot 0 keeps the first transparent PLTE color. Remaining colors keep PLTE order.
 - Truecolor, or more than 16 colors: alpha 0 is index 0. Opaque colors use slots 1..15 if anything is transparent, or slots 0..15 if nothing is. Extra colors are merged deterministically (see `quantize.h`).
 
@@ -81,7 +82,7 @@ Pipeline buffers (`rgba`, indices, 4bpp output, the RGB staging buffer) are **12
 
 ## NEON (Apple Silicon / AArch64)
 
-AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including all ten goldens. The NEON tile packer documents its little-endian lane assumption in `tile_pack.c`. The tanoby golden was produced independently of either C path. The game corner, pallet town, mart, school, underground path, generic building 1, bike shop, saffron gym, and viridian gym goldens were produced by this scalar pipeline and are checked the same way.
+AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including all eleven goldens. The NEON tile packer documents its little-endian lane assumption in `tile_pack.c`. The tanoby golden was produced independently of either C path. The game corner, pallet town, mart, school, underground path, generic building 1, bike shop, saffron gym, viridian gym, and cerulean gym goldens were produced by this scalar pipeline and are checked the same way.
 
 The `pixel-pipeline` job in `.github/workflows/shuverse-editor.yml` does not run this comparison. On `ubuntu-latest` NEON stays compiled out.
 
@@ -126,5 +127,6 @@ int pp_convert_png_to_gba(const char *png_path, const char *out_4bpp, const char
 | `testdata/bike_shop_tiles.png` | `data/tilesets/secondary/bike_shop/tiles.png` (128×32) | `tests/golden/bike_shop_tiles.4bpp` (2048 bytes, 16×4 tiles) and `.pal` (32 bytes) |
 | `testdata/saffron_gym_tiles.png` | `data/tilesets/secondary/saffron_gym/tiles.png` (128×48) | `tests/golden/saffron_gym_tiles.4bpp` (3072 bytes, 16×6 tiles) and `.pal` (32 bytes) |
 | `testdata/viridian_gym_tiles.png` | `data/tilesets/secondary/viridian_gym/tiles.png` (128×48) | `tests/golden/viridian_gym_tiles.4bpp` (3072 bytes, 16×6 tiles) and `.pal` (32 bytes) |
+| `testdata/cerulean_gym_tiles.png` | `data/tilesets/secondary/cerulean_gym/tiles.png` (128×64) | `tests/golden/cerulean_gym_tiles.4bpp` (4096 bytes, 16×8 tiles) and `.pal` (32 bytes) |
 
-All ten goldens are checked by `make test` on the scalar path. `game_corner`, `pallet_town`, `mart`, `school`, `underground_path`, `generic_building_1`, `bike_shop`, `saffron_gym`, and `viridian_gym` are indexed PNGs with 16 PLTE colors and no `tRNS`, so index 0 stays the first palette entry.
+All eleven goldens are checked by `make test` on the scalar path. `game_corner`, `pallet_town`, `mart`, `school`, `underground_path`, `generic_building_1`, `bike_shop`, `saffron_gym`, `viridian_gym`, and `cerulean_gym` are indexed PNGs with 16 PLTE colors and no `tRNS`, so index 0 stays the first palette entry.
