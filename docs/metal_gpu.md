@@ -18,19 +18,34 @@ The GPU resources are all `MTLStorageModeShared`:
 
 | Resource | Storage | Contents |
 |---|---|---|
-| `tileset-indices` | shared buffer, viewed as `r8Uint` | one byte per texel, values 0…15, 16 tiles per row |
+| `tileset-indices` | triple shared ring, each viewed as `r8Uint` | one byte per texel, values 0…15, 16 tiles per row |
 | `tileset-rgb555` | shared buffer | 16 banks × 16 `ushort` RGB555 colors |
 | `metatile-entries` | shared buffer | 1024 × 8 screen entries |
 
-The index buffer's row stride is a multiple of `minimumLinearTextureAlignment(for: .r8Uint)`. The CPU writes that buffer with `contents()`; the texture is a view of the same allocation. There is no managed-buffer blit. A failed `makeBuffer` or `makeTexture` sets `MapGPUState.note` (`Shared tileset upload failed. …`). Debug builds also hit `assertionFailure` in the canvas.
+Each index buffer's row stride is a multiple of `minimumLinearTextureAlignment(for: .r8Uint)`. The CPU writes that buffer with `contents()`; the texture is a view of the same allocation. There is no managed-buffer blit. A failed `makeBuffer` or `makeTexture`, including a failed animation row rewrite, sets `MapGPUState.note` (`Shared tileset upload failed. …`). Debug builds also hit `assertionFailure` in the canvas.
 
 `map_tile_fragment` matches `GBATileset.sample`. Index 0 is transparent on both layers. Primary tiles sit at ids 0–639 and secondary tiles at 640+. BG banks follow pret: primary palettes 0–6 (color 0 forced black) and secondary palettes 7–12 in slots 7–12. Other maps leave the ground undrawn and set a note; they do not fall back to `MetatileColor`.
 
-Tileset animations, metatile behavior, and layer-type versus sprite priority are not applied. Both layers are composited in the ground fragment at depth 0.70. `EditorDocument.sharedTilesets` is still an id-only record.
+Metatile behavior and layer-type versus sprite priority are not applied. Both layers are composited in the ground fragment at depth 0.70. `EditorDocument.sharedTilesets` is still an id-only record.
+
+## Tileset animation stub
+
+Pallet Town water is the only animated range. pret's `gTileset_General` callback (`TilesetAnim_General` in `tileset_anims.c`) copies `water_current_landwatersedge` when `counter % 16 == 1`, frame `counter / 16`, onto 4bpp tile 416 for 48 tiles. The counter wraps at 640. Those frames are separate PNGs, not extra tiles in `tiles.png`.
+
+`PalletTownTilesetAnim` does not load those PNGs. It is a stub table for the four tile ids this map samples: **416…419** (metatiles 291, 298, 299, 300, 721, and 722). Eight frames, same period and phase as pret. Frame 0 is the baked atlas tile. Frame `n` rotates each of those tiles up by `n` pixels. The shader does not animate; `map_tile_fragment` still samples the shared index atlas.
+
+The map view stays paused (`isPaused`, `enableSetNeedsDisplay`). A 60 Hz timer stands in for the GBA vblank counter. On a tick that queues a frame, the CPU writes the new indices into its atlas copy and marks the triple ring dirty. `encode` memcpy's only the affected pixel rows — tile row 26, pixel rows 208…215 — into the slot the GPU has finished reading. The status line shows `water frame N`.
+
+### Known gaps
+
+- Frame pixels are this scroll, not pret's `water_current_landwatersedge/*.png` frames.
+- The other 44 tiles of that DMA (420…463) stay on the baked graphics. Sand-water edge (tile 464, 18 tiles) and flowers (tiles 508…511, metatile 4) do not animate.
+- Other maps still have no 4bpp atlas. Full multi-map tilesets are out of scope.
+- Secondary tileset callbacks are not run.
 
 ## Ring buffers
 
-`FrameRing` has three slots. `draw` waits on a semaphore before taking a slot and signals it from the command-buffer completed handler, so the CPU does not write a buffer the GPU is still reading. `makeBuffer` runs when a ring is created and again only if a map outgrows `RingCapacity` (the initial grid holds 4096 cells; Pallet Town is 480). A selection change marks slots dirty and copies four instances into the existing selection ring.
+`FrameRing` has three slots. `draw` waits on a semaphore before taking a slot and signals it from the command-buffer completed handler, so the CPU does not write a buffer the GPU is still reading. `makeBuffer` runs when a ring is created and again only if a map outgrows `RingCapacity` (the initial grid holds 4096 cells; Pallet Town is 480). A selection change marks slots dirty and copies four instances into the existing selection ring. The index atlas uses the same three shared slots; an animation tick dirties them and the draw copies only the water rows into the free slot.
 
 ## Stage-in and depth
 
