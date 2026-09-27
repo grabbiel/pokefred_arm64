@@ -1,11 +1,11 @@
 # Apple Silicon constraints (Shuverse Editor)
 
 ## UI shell (Editor UI / Dear ImGui)
-Shipped dock shell is described in `ShuverseEditor/README.md` (PR #8).
+Shipped dock shell is described in `ShuverseEditor/README.md` (PR #8). Editor UI / ImGuiHost owns the docks and the Tileset swatches. Metal Render owns the map GPU path (`MapCanvasView`, `MapGPUState`, `MapShaders`).
 
-- Dear ImGui **v1.91.9b docking** is vendored under `ShuverseEditor/ImGuiHost/imgui` and built as the macOS-only `CImGuiHost` SwiftPM target. Official Metal/OSX `.mm` backends are not used; Swift hosts the overlay (`ImGuiOverlayView`, `ImGuiMetalRenderer`) on a **separate** command queue from the map canvas.
+- Dear ImGui **v1.91.9b docking** is vendored under `ShuverseEditor/ImGuiHost/imgui` and built as the macOS-only `CImGuiHost` SwiftPM target. Official Metal/OSX `.mm` backends are not used; Swift hosts the overlay (`ImGuiOverlayView`, `ImGuiMetalRenderer`) on a **separate** command queue (`imgui-queue`) from the map canvas.
 - Transparent overlay docks: **Map List**, **Inspector**, **Status**, **Tileset**. Central dock node is a pass-through hole (`hitTest` returns nil) so pan / zoom / pinch / click-inspect stay on `MapCanvasView`.
-- Dock layout is session-only (no ini). Tileset dock is still a placeholder swatch grid — it does not drive the 4bpp ground pass.
+- Dock layout is session-only (no ini). The Tileset dock draws metatiles from the loaded 4bpp atlas and RGB555 palette (`MetatileSwatchSheet` / `GBATileset.sample`: bottom layer, then top; index 0 transparent). `ImGuiMetalRenderer.uploadSwatch` fills a shared RGBA texture on the ImGui path and the overlay draws it on `imgui-queue`. That sheet is not a map `FrameRing` slot and is not a `MapGPUState` tileset upload. A click shows the metatile id. Maps without a loaded 4bpp atlas keep the tileset names and a short note. The swatches do not drive the ground pass.
 - Do not block the UI thread on disk I/O (see Serializer). Map GPU work and ImGui draw stay on efficiency vs performance cores as appropriate; never stall the `MTKView` present path for serialization.
 
 ## Metal canvas (real 4bpp path)
@@ -24,6 +24,7 @@ Canonical detail: `docs/metal_gpu.md` (updated in PR #9). This section is the sh
 - Hot paths through `.c` arrays / pixel data: ARM NEON SIMD (LD3/LD4 for interleaved RGB/RGBA).
 - Align structs/allocations to **128-byte** cache lines (Apple Silicon), not 64-byte x86 assumptions.
 - RGB24 → GBA RGB555: fixed-point NEON, not floating point. 4bpp pack: two 4-bit pixels per byte across 128-bit vectors where applicable.
+- `make test` in `tools/pixel_pipeline/` checks the tanoby ruins, game corner, and pallet town goldens. Pallet town is the third pret sheet: `data/tilesets/secondary/pallet_town/tiles.png` (128×40, 4-bit colormap, 16 grays, no tRNS) against `tests/golden/pallet_town_tiles.4bpp` (2560 bytes) and `.pal` (32 bytes). Provenance is `testdata/ORIGIN.txt`. The pixel-pipeline CI job already runs `make && make test`. Fixture tables stay in `tools/pixel_pipeline/README.md`.
 
 ## Serializer
 - 4bpp indexed writes: NEON-pack two 4-bit pixels per byte across 128-bit vectors (graphics path when dirty).
