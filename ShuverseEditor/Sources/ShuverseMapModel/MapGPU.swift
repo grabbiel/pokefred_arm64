@@ -10,9 +10,15 @@ public enum MapGPULayout {
     public static let instanceHalfOffset = 8
     public static let instanceColorOffset = 16
     public static let instanceDepthOffset = 32
+    /// `MapCanopyInstance`: cell index, then depth.
+    public static let canopyInstanceBytes = 8
+    public static let canopyCellOffset = 0
+    public static let canopyDepthOffset = 4
     /// Enough for maps well past Pallet Town (24×20) without a realloc.
     public static let initialGridCells = 4096
     public static let initialMarkerInstances = 256
+    public static let initialCanopyInstances = 256
+    public static let initialDepthSprites = 16
     public static let selectionInstances = 4
 }
 

@@ -12,7 +12,7 @@ Shipped dock shell is described in `ShuverseEditor/README.md` (PR #8).
 Canonical detail: `docs/metal_gpu.md` (updated in PR #9). This section is the short Apple Silicon contract.
 
 - Shared grid: `MapMetatileGrid`, one `UInt32` per cell, `MTLStorageModeShared`. Triple-slot `FrameRing` + semaphore so the CPU does not write a buffer the GPU is still reading.
-- Vertices: `[[stage_in]]` on map / sprite paths; depth-stencil layers (ground 0.70, markers 0.28, selection 0.15; sprite/canopy reserved). One encoder batches tiles, markers, and selection. Depth `storeAction` is `.dontCare`.
+- Vertices: `[[stage_in]]` on map, canopy, and sprite paths; depth-stencil layers (ground 0.70, sprite stub 0.55, canopy leaves 0.40, markers 0.28, selection 0.15). One encoder batches canopy, the sprite stub, tiles, markers, and selection. Canopy is submitted before ground; less-than depth keeps the leaves in front. Depth `storeAction` is `.dontCare`.
 - **Pallet Town ground is real GBA graphics**, not `MetatileColor`. Shared uploads (all `MTLStorageModeShared`, no managed blit):
   - `tileset-indices` — unpacked `.4bpp` nibbles as `r8Uint` (0…15), row stride ≥ `minimumLinearTextureAlignment`
   - `tileset-rgb555` — 16 banks × 16 little-endian RGB555 (`0bbbbbgggggrrrrr`)
