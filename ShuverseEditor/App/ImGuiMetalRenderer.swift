@@ -2,6 +2,7 @@ import CImGuiHost
 import Foundation
 import Metal
 import MetalKit
+import ShuverseMapModel
 
 /// Draws Dear ImGui meshes. This pass is independent of the map canvas:
 /// its buffers, pipeline, and command queue are not the shared metatile rings.
@@ -14,6 +15,10 @@ final class ImGuiMetalRenderer {
     private var pipelineFormat: MTLPixelFormat?
     private var fontTexture: MTLTexture?
     private var fontTexID: UInt64 = 0
+    private var swatchTexture: MTLTexture?
+    private var swatchTexID: UInt64 = 0
+    private var swatchGeneration: UInt64 = 0
+    private var extraTextures: [UInt64: MTLTexture] = [:]
     private var vertexBuffer: MTLBuffer?
     private var indexBuffer: MTLBuffer?
 
@@ -60,8 +65,50 @@ final class ImGuiMetalRenderer {
         note = nil
     }
 
+    /// Uploads the dock's metatile sheet. This texture is not the map atlas.
+    func uploadSwatch(_ sheet: MetatileSwatchSheet) -> UInt64 {
+        if swatchGeneration == sheet.generation, swatchTexID != 0 {
+            return swatchTexID
+        }
+        let byteCount = sheet.width * sheet.height * 4
+        guard sheet.width > 0, sheet.height > 0, sheet.rgba.count == byteCount else {
+            return 0
+        }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: sheet.width,
+            height: sheet.height,
+            mipmapped: false
+        )
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            note = "ImGui tileset swatch texture allocation failed."
+            return 0
+        }
+        texture.label = "ImGui Tileset Swatches"
+        sheet.rgba.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.replace(
+                region: MTLRegionMake2D(0, 0, sheet.width, sheet.height),
+                mipmapLevel: 0,
+                withBytes: base,
+                bytesPerRow: sheet.width * 4
+            )
+        }
+        if swatchTexID != 0 {
+            extraTextures.removeValue(forKey: swatchTexID)
+        }
+        let texID = UInt64(UInt(bitPattern: Unmanaged.passUnretained(texture).toOpaque()))
+        swatchTexture = texture
+        extraTextures[texID] = texture
+        swatchGeneration = sheet.generation
+        swatchTexID = texID
+        return texID
+    }
+
     func encode(_ encoder: MTLRenderCommandEncoder, colorPixelFormat: MTLPixelFormat) {
-        guard ensurePipeline(colorPixelFormat: colorPixelFormat), let pipeline, let fontTexture else {
+        guard ensurePipeline(colorPixelFormat: colorPixelFormat), let pipeline, fontTexture != nil else {
             return
         }
         var data = IgHostDrawData()
@@ -103,7 +150,6 @@ final class ImGuiMetalRenderer {
             }
         }
         encoder.setVertexBuffer(vertices, offset: 0, index: 0)
-        encoder.setFragmentTexture(fontTexture, index: 0)
 
         let indexType: MTLIndexType = indexStride == 2 ? .uint16 : .uint32
         var vertexBase = 0
@@ -129,7 +175,7 @@ final class ImGuiMetalRenderer {
                 if command.is_callback != 0 || command.elem_count == 0 || command.tex_id == 0 {
                     continue
                 }
-                guard command.tex_id == fontTexID else { continue }
+                guard let texture = texture(for: command.tex_id) else { continue }
                 var minX = (command.clip_x - data.display_x) * data.scale_x
                 var minY = (command.clip_y - data.display_y) * data.scale_y
                 var maxX = (command.clip_z - data.display_x) * data.scale_x
@@ -146,6 +192,9 @@ final class ImGuiMetalRenderer {
                     height: Int(maxY - minY)
                 )
                 encoder.setScissorRect(scissor)
+                encoder.setFragmentTexture(texture, index: 0)
+                var nearest: UInt32 = command.tex_id == fontTexID ? 0 : 1
+                encoder.setFragmentBytes(&nearest, length: MemoryLayout<UInt32>.size, index: 0)
                 let vertexOffset = (vertexBase + Int(command.vtx_offset)) * vertexStride
                 encoder.setVertexBufferOffset(vertexOffset, index: 0)
                 encoder.drawIndexedPrimitives(
@@ -169,6 +218,13 @@ final class ImGuiMetalRenderer {
         created?.label = label
         buffer = created
         return created
+    }
+
+    private func texture(for texID: UInt64) -> MTLTexture? {
+        if texID == fontTexID {
+            return fontTexture
+        }
+        return extraTextures[texID]
     }
 
     private func ensurePipeline(colorPixelFormat: MTLPixelFormat) -> Bool {
@@ -283,9 +339,13 @@ final class ImGuiMetalRenderer {
     }
 
     fragment half4 fragment_main(VertexOut in [[stage_in]],
-                                 texture2d<half, access::sample> texture [[texture(0)]]) {
+                                 texture2d<half, access::sample> texture [[texture(0)]],
+                                 constant uint &sampleNearest [[buffer(0)]]) {
         constexpr sampler linearSampler(coord::normalized, min_filter::linear, mag_filter::linear, mip_filter::linear);
-        half4 texColor = texture.sample(linearSampler, in.texCoords);
+        constexpr sampler nearestSampler(coord::normalized, min_filter::nearest, mag_filter::nearest);
+        half4 texColor = sampleNearest == 0
+            ? texture.sample(linearSampler, in.texCoords)
+            : texture.sample(nearestSampler, in.texCoords);
         return half4(in.color) * texColor;
     }
     """

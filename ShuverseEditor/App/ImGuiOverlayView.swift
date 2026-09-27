@@ -2,6 +2,7 @@ import AppKit
 import CImGuiHost
 import MetalKit
 import QuartzCore
+import ShuverseMapModel
 
 /// Transparent MTKView over the map. `hitTest` returns nil on the dockspace
 /// hole, so pan, zoom, and click-inspect stay on `MapCanvasView`. Docks, tabs,
@@ -139,8 +140,12 @@ final class ImGuiOverlayView: MTKView, MTKViewDelegate {
         lastFrameTime = now
 
         renderer.uploadFontIfNeeded()
+        var model = modelProvider?() ?? .empty
+        if let sheet = model.swatches {
+            model.swatchTexID = renderer.uploadSwatch(sheet)
+        }
         ig_host_new_frame(Float(bounds.width), Float(bounds.height), scaleX, scaleY, dt, mx, my)
-        let action = ImGuiDockShell.build(modelProvider?() ?? .empty)
+        let action = ImGuiDockShell.build(model)
         ig_host_render()
 
         commandBuffer.label = "imgui-frame"

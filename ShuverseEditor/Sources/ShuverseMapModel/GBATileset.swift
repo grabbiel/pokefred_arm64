@@ -307,6 +307,95 @@ public struct GBATileset {
     }
 }
 
+/// RGBA8 sheet of metatile previews for the ImGui tileset dock.
+///
+/// Each cell is 16×16 and matches `GBATileset.sample` (bottom layer, then top,
+/// index 0 transparent). The map canvas does not upload this sheet.
+public struct MetatileSwatchSheet {
+    public static let columns = 16
+    public static let tileSize = 16
+
+    public var generation: UInt64
+    public var columns: Int
+    public var count: Int
+    public var tileSize: Int
+    public var width: Int
+    public var height: Int
+    public var rgba: [UInt8]
+
+    public static func channel(_ component: Float) -> UInt8 {
+        let scaled = component * 255
+        if scaled <= 0 { return 0 }
+        if scaled >= 255 { return 255 }
+        return UInt8(scaled.rounded())
+    }
+
+    public static func make(
+        from tileset: GBATileset,
+        generation: UInt64 = 1,
+        count: Int = GBATileset.metatileCount
+    ) -> MetatileSwatchSheet {
+        let columns = Self.columns
+        let tileSize = Self.tileSize
+        let clamped = max(0, min(count, GBATileset.metatileCount))
+        let rows = clamped == 0 ? 0 : (clamped + columns - 1) / columns
+        let width = columns * tileSize
+        let height = rows * tileSize
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        for id in 0..<clamped {
+            let column = id % columns
+            let row = id / columns
+            for y in 0..<tileSize {
+                for x in 0..<tileSize {
+                    let color = tileset.sample(metatileId: id, x: x, y: y)
+                    let offset = ((row * tileSize + y) * width + column * tileSize + x) * 4
+                    rgba[offset] = channel(color.r)
+                    rgba[offset + 1] = channel(color.g)
+                    rgba[offset + 2] = channel(color.b)
+                    rgba[offset + 3] = color.a <= 0 ? 0 : 255
+                }
+            }
+        }
+        return MetatileSwatchSheet(
+            generation: generation,
+            columns: columns,
+            count: clamped,
+            tileSize: tileSize,
+            width: width,
+            height: height,
+            rgba: rgba
+        )
+    }
+
+    public func pixel(metatileId: Int, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8)? {
+        guard (0..<count).contains(metatileId),
+              (0..<tileSize).contains(x),
+              (0..<tileSize).contains(y),
+              width > 0 else {
+            return nil
+        }
+        let column = metatileId % columns
+        let row = metatileId / columns
+        let offset = ((row * tileSize + y) * width + column * tileSize + x) * 4
+        guard offset + 3 < rgba.count else { return nil }
+        return (rgba[offset], rgba[offset + 1], rgba[offset + 2], rgba[offset + 3])
+    }
+
+    /// Half-texel inset so a nearest sampler stays inside this metatile.
+    public func uv(for metatileId: Int) -> (u0: Float, v0: Float, u1: Float, v1: Float) {
+        guard width > 0, height > 0, (0..<count).contains(metatileId) else {
+            return (0, 0, 0, 0)
+        }
+        let column = metatileId % columns
+        let row = metatileId / columns
+        let u0 = (Float(column * tileSize) + 0.5) / Float(width)
+        let v0 = (Float(row * tileSize) + 0.5) / Float(height)
+        let u1 = (Float((column + 1) * tileSize) - 0.5) / Float(width)
+        let v1 = (Float((row + 1) * tileSize) - 0.5) / Float(height)
+        return (u0, v0, u1, v1)
+    }
+}
+
 /// Finds the baked Pallet Town directory by walking up from a set of roots.
 public enum TilesetLocator {
     public static let relativePaths = [

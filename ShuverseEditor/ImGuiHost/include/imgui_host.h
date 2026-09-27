@@ -79,6 +79,21 @@ void ig_host_same_line(void);
 int ig_host_button(const char *label);
 int ig_host_selectable(const char *label, int selected);
 void ig_host_swatch(int ident, float w, float h);
+float ig_host_content_width(void);
+void ig_host_push_swatch_style(void);
+void ig_host_pop_swatch_style(void);
+/* Clickable image. uv is the texture rect. selected draws a highlight. */
+int ig_host_image_button(
+    int ident,
+    unsigned long long tex_id,
+    float u0,
+    float v0,
+    float u1,
+    float v1,
+    float w,
+    float h,
+    int selected
+);
 void ig_host_render(void);
 
 /* 1 when the point (top-left origin, points) lies on a dock, tab, or
