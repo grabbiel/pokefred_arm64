@@ -22,7 +22,7 @@ NULLISH = frozenset({"0", "0x0", "NULL", "", "None"})
 HEURISTIC_SUMMARY = [
     (re.compile(r"OakTrigger", re.I), "Oak intro stop: prevents leaving town without a Pokémon; leads player to the lab."),
     (re.compile(r"SignLady", re.I), "Sign-lady NPC / trigger: teaches Start-menu / Trainer Tips interaction."),
-    (re.compile(r"FatMan", re.I), "Town NPC dialogue (PC storage tip)."),
+    (re.compile(r"(?<!FanClub_EventScript_)FatMan", re.I), "Town NPC dialogue (PC storage tip)."),
     (re.compile(r"LabSign|OaksLabSign|PlayersHouseSign|RivalsHouseSign|TownSign|CitySign|RouteSign|GymSign|ExitSign|DiglettsCaveSign|TrainerTips|NicknameSign", re.I), "Sign / bg text readout."),
     (re.compile(r"BulbasaurBall|SquirtleBall|CharmanderBall", re.I), "Starter Poké Ball: confirm choice, give mon, rival takes the counter-type."),
     (re.compile(r"LeaveStarterScene", re.I), "Blocks leaving the lab until a starter is chosen."),
@@ -51,7 +51,7 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_Brock|DefeatedBrock|GiveTM39", re.I), "Gym Leader Brock battle / TM39 reward."),
     (re.compile(r"EventScript_Giovanni|DefeatedGiovanni|GiveTM26", re.I), "Gym Leader Giovanni battle / TM26 reward."),
     (re.compile(r"GymGuy|GymStatue", re.I), "Gym tip guy or victory statue text."),
-    (re.compile(r"EventScript_Aide\b|AlreadyGotHM05|GetAideRequestInfo", re.I), "Oak aide HM/item gift (Route 2 gate; dex-count gated)."),
+    (re.compile(r"EventScript_Aide\b|AlreadyGotHM05", re.I), "Oak aide HM/item gift (Route 2 gate; dex-count gated)."),
     (re.compile(r"EventScript_Reyley|DeclineTrade|AlreadyTraded|NotRequestedMon", re.I), "In-game trade NPC."),
     (re.compile(r"Jigglypuff", re.I), "Ambient Jigglypuff NPC (song / flavor)."),
     # Shared field-move / center scripts (data/scripts/)
@@ -79,6 +79,21 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"UndergroundPathSign", re.I), "Underground Path entrance sign."),
     (re.compile(r"MtMoonSign|ZubatSign", re.I), "Mt. Moon area sign / flavor text."),
     (re.compile(r"ItemTM|ItemEscapeRope|ItemMoonStone|ItemRareCandy|ItemPotion|ItemAntidote|ItemRevive|ItemStarPiece|ItemParalyzeHeal", re.I), "Visible item ball pickup."),
+    # Vermilion / Rock Tunnel / Routes 9–11 / SS Anne / Power Plant
+    (re.compile(r"EventScript_LtSurge|DefeatedLtSurge|GiveTM34|TM34\b", re.I), "Gym Leader Lt. Surge battle / TM34 reward."),
+    (re.compile(r"TrashCan|FoundSwitch|TrySwitch|BeamsOff|BeamsOn|LocksAlreadyOpen|InitTrashCans", re.I), "Vermilion Gym trash-can switch puzzle (unlocks Lt. Surge)."),
+    (re.compile(r"FerrySailor|CheckTicket|SSTicket|Seagallop|SailToNavelRock|SailToBirthIsland|ExitSSAnne|DontHaveSSTicket", re.I), "Harbor ferry / SS Ticket gate / Seagallop destinations."),
+    (re.compile(r"SnorlaxNotice|HarborSign|PokemonFanClubSign", re.I), "Vermilion harbor / Snorlax / Fan Club sign text."),
+    (re.compile(r"PokemonFanClub_EventScript_Chairman|BikeVoucher|AlreadyHeardStory|ChairmanStory|NoRoomForBikeVoucher", re.I), "Pokémon Fan Club chairman: Bike Voucher gift."),
+    (re.compile(r"PokemonFanClub_EventScript_(FatMan|Woman|Pikachu|Seel|WorkerF)", re.I), "Pokémon Fan Club NPC / mascot dialogue."),
+    (re.compile(r"FishingGuru|OldRod|AlreadyGotOldRod|GiveOldRod|NoRoomForOldRod", re.I), "Fishing Guru: Old Rod gift."),
+    (re.compile(r"Zapdos|Electrode\d?\b", re.I), "Power Plant static encounter (Zapdos / Electrode)."),
+    (re.compile(r"CaptainsOffice_EventScript_Captain|AlreadyGotCut|NoRoomForCut", re.I), "SS Anne captain: HM01 Cut gift / seasickness scene."),
+    (re.compile(r"AlreadyGotItemfinder|Itemfinder", re.I), "Oak aide Itemfinder gift (Route 11 gate; dex-count gated)."),
+    (re.compile(r"Binoculars", re.I), "Gatehouse binoculars scenery text."),
+    (re.compile(r"EventScript_Machop\b", re.I), "Vermilion Machop NPC (strength demo / flavor)."),
+    (re.compile(r"NorthRockTunnelSign|SouthRockTunnelSign|PowerPlantSign|DiglettsCaveSign|RouteSign", re.I), "Route / cave / plant area sign."),
+    (re.compile(r"SSAnne_Kitchen_EventScript_|SalmonDuSalad|EelsAuBarbecue|PrimeBeefsteak", re.I), "SS Anne kitchen chef / menu flavor."),
     # Generic trainers (after specific leaders)
     (re.compile(r"EventScript_(Rick|Doug|Sammy|Anthony|Charlie|Liam|Jason|Cole|Atsushi|Kiyo|Takashi|Samuel|Yuji|Warren)\b", re.I), "Trainer battle script (see body for trainerbattle_*)."),
     (re.compile(r"Rival\b", re.I), "Rival interact dialogue (waits for / reacts to starter choice)."),
@@ -372,8 +387,45 @@ CERULEAN_CLUSTER_MAPS = [
     "UndergroundPath_SouthEntrance",
 ]
 
-# Union of known additive script-coverage presets (corridor ∪ Cerulean cluster)
-SCRIPT_COVERAGE_MAPS = list(dict.fromkeys([*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS]))
+# Slice 3: Vermilion (+ indoors / Fan Club) → Diglett's Cave → Routes 9–11 →
+# Rock Tunnel / Power Plant → SS Anne (harbor ship; key decks/corridors)
+VERMILION_CLUSTER_MAPS = [
+    "VermilionCity",
+    "VermilionCity_Gym",
+    "VermilionCity_House1",
+    "VermilionCity_House2",
+    "VermilionCity_House3",
+    "VermilionCity_Mart",
+    "VermilionCity_PokemonCenter_1F",
+    "VermilionCity_PokemonCenter_2F",
+    "VermilionCity_PokemonFanClub",
+    "DiglettsCave_NorthEntrance",
+    "DiglettsCave_SouthEntrance",
+    "DiglettsCave_B1F",
+    "Route9",
+    "Route10",
+    "Route10_PokemonCenter_1F",
+    "Route10_PokemonCenter_2F",
+    "Route11",
+    "Route11_EastEntrance_1F",
+    "Route11_EastEntrance_2F",
+    "RockTunnel_1F",
+    "RockTunnel_B1F",
+    "PowerPlant",
+    "SSAnne_Exterior",
+    "SSAnne_Deck",
+    "SSAnne_CaptainsOffice",
+    "SSAnne_Kitchen",
+    "SSAnne_1F_Corridor",
+    "SSAnne_2F_Corridor",
+    "SSAnne_3F_Corridor",
+    "SSAnne_B1F_Corridor",
+]
+
+# Union of known additive script-coverage presets (slices 1–3)
+SCRIPT_COVERAGE_MAPS = list(
+    dict.fromkeys([*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS, *VERMILION_CLUSTER_MAPS])
+)
 
 
 def list_script_maps(workspace: Path) -> list[str]:
@@ -397,9 +449,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Parse Pewter→Mt.Moon→Cerulean→Route5/6 cluster (slice 2)",
     )
     p.add_argument(
+        "--vermilion",
+        action="store_true",
+        help="Parse Vermilion→Rock Tunnel→Routes9–11→SS Anne cluster (slice 3)",
+    )
+    p.add_argument(
         "--script-coverage",
         action="store_true",
-        help="Parse all known script-coverage presets (corridor ∪ Cerulean cluster)",
+        help="Parse all known script-coverage presets (slices 1–3 union)",
     )
     p.add_argument("--all-parsed", action="store_true", help="Parse every map with parsed/<Name>.json")
     p.add_argument("--decomp", type=Path, default=DEFAULT_DECOMP)
@@ -416,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
             maps.extend(CORRIDOR_MAPS)
         if args.cerulean:
             maps.extend(CERULEAN_CLUSTER_MAPS)
+        if args.vermilion:
+            maps.extend(VERMILION_CLUSTER_MAPS)
     if args.all_parsed:
         maps.extend(
             sorted(
@@ -434,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             seen.add(m)
             ordered.append(m)
     if not ordered:
-        p.error("provide map names and/or --corridor / --cerulean / --script-coverage / --all-parsed")
+        p.error("provide map names and/or --corridor / --cerulean / --vermilion / --script-coverage / --all-parsed")
 
     fails = 0
     for m in ordered:
