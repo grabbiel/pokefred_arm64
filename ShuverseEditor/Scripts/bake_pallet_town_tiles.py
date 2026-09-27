@@ -6,10 +6,11 @@ Reads a pret/pokefirered checkout:
   data/tilesets/primary/general/
   data/tilesets/secondary/pallet_town/
 
-Writes GBA 4bpp (via tools/pixel_pipeline) plus 32-byte RGB555 palette
-banks. Palette reduction matches pixel_pipeline: c5 = (c8 * 32) >> 8,
-packed little-endian 0bbbbbgggggrrrrr. metatiles.bin is copied unchanged
-(8 little-endian screen entries per metatile).
+Writes GBA 4bpp via the pixel_pipeline CLI (see tools/pixel_pipeline/CONTRACT.md)
+plus 32-byte RGB555 palette banks. Each bank matches CONTRACT.md's <output.pal>:
+c5 = (c8 * 32) >> 8, little-endian 0bbbbbgggggrrrrr. .4bpp matches <output.4bpp>.
+metatiles.bin is copied unchanged (8 little-endian screen entries per metatile).
+This script shells out to the CLI. It does not link libpixel_pipeline.a.
 
 The gray .pal that pixel_pipeline writes next to tiles.png is the PNG's
 own ramp. The editor does not load it. Color comes from the JASC banks.
@@ -136,7 +137,7 @@ Sources (pret/pokefirered):
 
 Produced by ShuverseEditor/Scripts/bake_pallet_town_tiles.py.
 
-4bpp (pixel_pipeline, GBATEK nibble order, 32 bytes per 8×8 tile):
+4bpp (pixel_pipeline CLI, CONTRACT.md <output.4bpp>, 32 bytes per 8×8 tile):
   tools/pixel_pipeline/build/pixel_pipeline <tiles.png> primary.4bpp primary.gray.pal
   tools/pixel_pipeline/build/pixel_pipeline <tiles.png> secondary.4bpp secondary.gray.pal
   primary.4bpp   {len(primary_4bpp)} bytes  sha256 {sha256(primary_4bpp)}
@@ -145,7 +146,7 @@ Produced by ShuverseEditor/Scripts/bake_pallet_town_tiles.py.
 The gray .pal files are the tiles.png ramps (16 grays). They are not copied
 here and the editor does not sample them.
 
-RGB555 banks (pixel_pipeline .pal layout, one 32-byte file per bank):
+RGB555 banks (CONTRACT.md <output.pal>, one 32-byte file per bank):
   palettes/primary/00.pal … 15.pal
   palettes/secondary/00.pal … 15.pal
   c5 = (c8 * 32) >> 8, little-endian 0bbbbbgggggrrrrr, index 0 transparent.

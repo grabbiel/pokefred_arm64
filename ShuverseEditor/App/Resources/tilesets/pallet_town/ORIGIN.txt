@@ -10,7 +10,7 @@ Sources (pret/pokefirered):
 
 Produced by ShuverseEditor/Scripts/bake_pallet_town_tiles.py.
 
-4bpp (pixel_pipeline, GBATEK nibble order, 32 bytes per 8×8 tile):
+4bpp (pixel_pipeline CLI, CONTRACT.md <output.4bpp>, 32 bytes per 8×8 tile):
   tools/pixel_pipeline/build/pixel_pipeline <tiles.png> primary.4bpp primary.gray.pal
   tools/pixel_pipeline/build/pixel_pipeline <tiles.png> secondary.4bpp secondary.gray.pal
   primary.4bpp   20480 bytes  sha256 0e69da87ae43c973edd81c5e16be0185f561257d04300e7977b5ae2f0377c97f
@@ -19,7 +19,7 @@ Produced by ShuverseEditor/Scripts/bake_pallet_town_tiles.py.
 The gray .pal files are the tiles.png ramps (16 grays). They are not copied
 here and the editor does not sample them.
 
-RGB555 banks (pixel_pipeline .pal layout, one 32-byte file per bank):
+RGB555 banks (CONTRACT.md <output.pal>, one 32-byte file per bank):
   palettes/primary/00.pal … 15.pal
   palettes/secondary/00.pal … 15.pal
   c5 = (c8 * 32) >> 8, little-endian 0bbbbbgggggrrrrr, index 0 transparent.

@@ -1,4 +1,5 @@
 import Foundation
+import ShuverseMapModel
 
 enum MapFileLocator {
     /// Command-line path wins. Otherwise search upward for the sample, then the bundled copy.
