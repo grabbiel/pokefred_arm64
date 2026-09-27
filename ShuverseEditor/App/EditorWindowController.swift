@@ -8,6 +8,8 @@ final class EditorWindowController: NSWindowController {
 
     private var editorDocument = EditorDocument()
     private var selection: CellInspection?
+    private var selectedEventKey: String?
+    private var selectedEventMapId: String?
     private var rendererNote: String?
     private var cameraLine = "No map"
     private var swatchSheet: MetatileSwatchSheet?
@@ -134,6 +136,12 @@ final class EditorWindowController: NSWindowController {
         overlay.onSelectBrush = { [weak self] metatileId in
             self?.editorDocument.selectBrush(metatileId: Int(metatileId))
         }
+        overlay.onSelectEvent = { [weak self] key in
+            self?.selectEvent(key: key)
+        }
+        ImGuiEventsDock.modelProvider = { [weak self] in
+            self?.eventsModel() ?? .empty
+        }
         overlay.keepCanvasFirstResponder = { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self.canvas)
@@ -183,6 +191,33 @@ final class EditorWindowController: NSWindowController {
             swatchNote: swatchNote,
             brushMetatileId: editorDocument.brushMetatileId
         )
+    }
+
+    private func eventsModel() -> ImGuiEventsDock.Model {
+        guard let map = editorDocument.activeMap else {
+            return .empty
+        }
+        if selectedEventMapId != map.mapId {
+            selectedEventKey = nil
+            selectedEventMapId = map.mapId
+        }
+        return ImGuiEventsDock.Model(
+            mapName: map.name,
+            rows: MapEventCatalog.rows(for: map),
+            selectedKey: selectedEventKey
+        )
+    }
+
+    private func selectEvent(key: String) {
+        guard let map = editorDocument.activeMap,
+              let row = MapEventCatalog.row(key: key, in: map) else {
+            return
+        }
+        selectedEventKey = row.key
+        selectedEventMapId = map.mapId
+        if let inspection = map.inspection(x: row.x, y: row.y) {
+            selection = inspection
+        }
     }
 
     private func refreshSwatches(primary: String, secondary: String) {

@@ -14,6 +14,7 @@ exits non-zero naming the failed step.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import struct
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from contextlib import redirect_stdout
 from pathlib import Path
 
 DEFAULT_DECOMP = Path("/Users/rumpology/code/repo/32bit/pokefirered")
@@ -114,6 +116,8 @@ def resolve_border_arrays(
     Prefer doc['border'] blockdata-style arrays when present; otherwise unpack
     the existing on-disk border.bin (identity round-trip when parser omitted border).
     Size always comes from layouts.json border_width / border_height (pret).
+    Both dims zero is valid (pret layouts include 0×0) and yields an empty
+    border. One dimension zero and the other positive is rejected.
     """
     try:
         bw = int(layout["border_width"])
@@ -122,8 +126,10 @@ def resolve_border_arrays(
         raise SerializeError(
             f"layout missing border_width/border_height: {e}"
         ) from e
-    if bw <= 0 or bh <= 0:
-        raise SerializeError(f"border dims must be positive, got {bw}x{bh}")
+    if bw < 0 or bh < 0 or (bw == 0) != (bh == 0):
+        raise SerializeError(
+            f"border dims must both be positive or both be zero, got {bw}x{bh}"
+        )
     expected = bw * bh
 
     border = doc.get("border")
@@ -164,6 +170,24 @@ def resolve_border_arrays(
             f"border_width*border_height {expected} ({bw}x{bh})"
         )
     return metatile_ids, map_attributes, bw, bh
+
+
+def plan_border_bin(doc: dict, layout: dict, border_path: Path) -> tuple[bytes, int, int]:
+    """Border bytes that dry-run compares and ``--write`` stores.
+
+    Returns ``(packed, border_width, border_height)``. Both modes call this
+    so planning and packing cannot drift.
+    """
+    metatile_ids, map_attributes, bw, bh = resolve_border_arrays(
+        doc, layout, border_path
+    )
+    packed = pack_map_bin(metatile_ids, map_attributes)
+    expected = bw * bh * 2
+    if len(packed) != expected:
+        raise SerializeError(
+            f"border packed size {len(packed)} != expected {expected}"
+        )
+    return packed, bw, bh
 
 
 # Header fields copied from parsed doc → pret map.json (parsed key → json key)
@@ -589,13 +613,8 @@ def serialize_one(
             f"packed size {len(packed)} != expected {expected_size}"
         )
 
-    border_ids, border_attrs, bw, bh = resolve_border_arrays(doc, layout, border_path)
-    border_packed = pack_map_bin(border_ids, border_attrs)
+    border_packed, bw, bh = plan_border_bin(doc, layout, border_path)
     border_expected = bw * bh * 2
-    if len(border_packed) != border_expected:
-        raise SerializeError(
-            f"border packed size {len(border_packed)} != expected {border_expected}"
-        )
 
     existing_map_json: dict | None = None
     if map_json_path.is_file():
@@ -771,15 +790,318 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help=(
-            "Pack/unpack synthetic blockdata and drill cross-file --write "
-            "rollback in a temp directory. No decomp checkout required."
+            "Pack/unpack synthetic blockdata, prove dry-run and --write agree "
+            "on border.bin edge cases, and drill cross-file rollback. "
+            "No decomp checkout required."
         ),
     )
     return p
 
 
+def _synth_map_doc(
+    *,
+    width: int = 2,
+    height: int = 2,
+    border: dict | None = None,
+    include_border: bool = False,
+) -> dict:
+    """Minimal Map Parser document for synthetic layout drills."""
+    n = width * height
+    doc: dict = {
+        "name": "SynthTown",
+        "map_id": "MAP_SYNTH_TOWN",
+        "layout_id": "LAYOUT_SYNTH_TOWN",
+        "music": "MUS_TEST",
+        "weather": "WEATHER_SUNNY",
+        "map_type": "MAP_TYPE_TOWN",
+        "dimensions": {
+            "width_metatiles": width,
+            "height_metatiles": height,
+        },
+        "blockdata": {
+            "metatile_ids": [3] * n,
+            "map_attributes": [1] * n,
+        },
+        "object_events": [],
+        "warp_events": [],
+        "coord_events": [],
+        "bg_events": [],
+        "connections": [],
+    }
+    if include_border:
+        doc["border"] = border if border is not None else {
+            "metatile_ids": [],
+            "map_attributes": [],
+        }
+    return doc
+
+
+def _install_synth_decomp(
+    root: Path, doc: dict, bw: int, bh: int, border_bytes: bytes
+) -> tuple[dict, Path, Path, Path]:
+    """Write layouts.json plus map.bin / border.bin / map.json under ``root``."""
+    layout = {
+        "id": doc["layout_id"],
+        "name": "SynthTown_Layout",
+        "width": int(doc["dimensions"]["width_metatiles"]),
+        "height": int(doc["dimensions"]["height_metatiles"]),
+        "border_width": bw,
+        "border_height": bh,
+        "primary_tileset": "gTileset_General",
+        "secondary_tileset": "gTileset_Synth",
+        "border_filepath": "data/layouts/SynthTown/border.bin",
+        "blockdata_filepath": "data/layouts/SynthTown/map.bin",
+    }
+    layout_dir = root / "data" / "layouts" / "SynthTown"
+    layout_dir.mkdir(parents=True)
+    (root / "data" / "layouts" / "layouts.json").write_text(
+        json.dumps({"layouts": [layout]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    ids = [int(x) for x in doc["blockdata"]["metatile_ids"]]
+    attrs = [int(x) for x in doc["blockdata"]["map_attributes"]]
+    map_bin = layout_dir / "map.bin"
+    border_bin = layout_dir / "border.bin"
+    map_bin.write_bytes(pack_map_bin(ids, attrs))
+    border_bin.write_bytes(border_bytes)
+    map_json = root / "data" / "maps" / doc["name"] / "map.json"
+    map_json.parent.mkdir(parents=True)
+    map_json.write_bytes(dump_map_json(build_map_json(doc, None)))
+    return layout, map_bin, border_bin, map_json
+
+
+def _self_check_border_parity(check: Callable[..., None]) -> None:
+    """Dry-run planning and --write packing agree on border.bin edge cases.
+
+    Synthetic layouts only. Does not touch a pret checkout.
+    """
+
+    def parity(
+        name: str,
+        *,
+        bw: int,
+        bh: int,
+        doc: dict,
+        prior: bytes,
+        expect_match: bool,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="serialize-map-border-", dir="/tmp"
+        ) as tmp:
+            root = Path(tmp)
+            layout, map_bin, border_bin, map_json = _install_synth_decomp(
+                root, doc, bw, bh, prior
+            )
+            try:
+                planned, pbw, pbh = plan_border_bin(doc, layout, border_bin)
+            except SerializeError as e:
+                check(f"{name}: dry-run plan", False, str(e))
+                check(f"{name}: --write parity", False, str(e))
+                return
+            orig_map = map_bin.read_bytes()
+            orig_json = map_json.read_bytes()
+            orig_border = border_bin.read_bytes()
+            dry_buf = io.StringIO()
+            try:
+                with redirect_stdout(dry_buf):
+                    dry_rc = serialize_one(root, doc, do_write=False, force=False)
+            except SerializeError as e:
+                check(f"{name}: dry-run plan", False, str(e))
+                check(f"{name}: --write parity", False, "skipped after dry-run error")
+                return
+            dry_text = dry_buf.getvalue()
+            dry_kept = (
+                border_bin.read_bytes() == orig_border
+                and map_bin.read_bytes() == orig_map
+                and map_json.read_bytes() == orig_json
+            )
+            if expect_match:
+                dry_ok = (
+                    dry_rc == 0
+                    and pbw == bw
+                    and pbh == bh
+                    and len(planned) == bw * bh * 2
+                    and f"border.bin: MATCH ({len(planned)} bytes, byte-identical)"
+                    in dry_text
+                    and dry_kept
+                )
+            else:
+                dry_ok = (
+                    dry_rc == 1
+                    and pbw == bw
+                    and pbh == bh
+                    and len(planned) == bw * bh * 2
+                    and (
+                        f"border.bin: DIFF  rebuilt={len(planned)} "
+                        f"disk={len(orig_border)} "
+                    )
+                    in dry_text
+                    and dry_kept
+                    and planned != orig_border
+                )
+            check(
+                f"{name}: dry-run plan",
+                dry_ok,
+                f"rc={dry_rc} kept={dry_kept} planned_len={len(planned)} "
+                f"stdout={dry_text!r}",
+            )
+            write_buf = io.StringIO()
+            try:
+                with redirect_stdout(write_buf):
+                    write_rc = serialize_one(root, doc, do_write=True, force=False)
+            except SerializeError as e:
+                check(f"{name}: --write parity", False, str(e))
+                return
+            written = border_bin.read_bytes()
+            check(
+                f"{name}: --write parity",
+                write_rc == 0
+                and written == planned
+                and map_bin.read_bytes() == orig_map
+                and map_json.read_bytes() == orig_json,
+                f"rc={write_rc} written={written!r} planned={planned!r} "
+                f"stdout={write_buf.getvalue()!r}",
+            )
+
+    def fail_closed(
+        name: str, *, bw: int, bh: int, doc: dict, prior: bytes
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="serialize-map-border-", dir="/tmp"
+        ) as tmp:
+            root = Path(tmp)
+            _layout, map_bin, border_bin, map_json = _install_synth_decomp(
+                root, doc, bw, bh, prior
+            )
+            snap = (
+                map_bin.read_bytes(),
+                border_bin.read_bytes(),
+                map_json.read_bytes(),
+            )
+            for do_write, label in ((False, "dry-run"), (True, "--write")):
+                try:
+                    with redirect_stdout(io.StringIO()):
+                        serialize_one(root, doc, do_write=do_write, force=False)
+                except SerializeError as e:
+                    unchanged = (
+                        map_bin.read_bytes(),
+                        border_bin.read_bytes(),
+                        map_json.read_bytes(),
+                    ) == snap
+                    msg = str(e)
+                    check(
+                        f"{name}: {label} fail-closed",
+                        unchanged and "border" in msg,
+                        f"unchanged={unchanged} err={msg}",
+                    )
+                else:
+                    check(
+                        f"{name}: {label} fail-closed",
+                        False,
+                        "serialize_one returned",
+                    )
+
+    # 2×2 is the common pret border. Doc cells differ from the synthetic prior.
+    present = {
+        "metatile_ids": [7, 8, 9, 10],
+        "map_attributes": [1, 2, 3, 4],
+    }
+    parity(
+        "border present in doc",
+        bw=2,
+        bh=2,
+        doc=_synth_map_doc(border=present, include_border=True),
+        prior=pack_map_bin([0, 0, 0, 0], [0, 0, 0, 0]),
+        expect_match=False,
+    )
+
+    # Parser omitted border: re-pack the on-disk bytes (distinctive pattern).
+    prior_ids = [11, 12, 13, 14]
+    prior_attrs = [5, 6, 7, 8]
+    parity(
+        "border omitted in doc",
+        bw=2,
+        bh=2,
+        doc=_synth_map_doc(include_border=False),
+        prior=pack_map_bin(prior_ids, prior_attrs),
+        expect_match=True,
+    )
+
+    # pret layouts.json includes 0×0. Empty doc arrays and an empty file.
+    parity(
+        "zero border 0x0 present",
+        bw=0,
+        bh=0,
+        doc=_synth_map_doc(
+            border={"metatile_ids": [], "map_attributes": []},
+            include_border=True,
+        ),
+        prior=b"",
+        expect_match=True,
+    )
+    parity(
+        "zero border 0x0 omitted",
+        bw=0,
+        bh=0,
+        doc=_synth_map_doc(include_border=False),
+        prior=b"",
+        expect_match=True,
+    )
+    # Stale non-empty file: plan is still empty; dry-run must not truncate.
+    parity(
+        "zero border 0x0 replaces stale bytes only on --write",
+        bw=0,
+        bh=0,
+        doc=_synth_map_doc(
+            border={"metatile_ids": [], "map_attributes": []},
+            include_border=True,
+        ),
+        prior=b"\x1f\x02\x1f\x02",
+        expect_match=False,
+    )
+
+    # Smallest positive border the layout fields allow.
+    parity(
+        "min border 1x1",
+        bw=1,
+        bh=1,
+        doc=_synth_map_doc(
+            border={"metatile_ids": [4], "map_attributes": [2]},
+            include_border=True,
+        ),
+        prior=pack_map_bin([0], [0]),
+        expect_match=False,
+    )
+
+    fail_closed(
+        "mismatch border cells vs layouts.json",
+        bw=2,
+        bh=2,
+        doc=_synth_map_doc(
+            border={"metatile_ids": [1], "map_attributes": [0]},
+            include_border=True,
+        ),
+        prior=pack_map_bin([0, 0, 0, 0], [0, 0, 0, 0]),
+    )
+    fail_closed(
+        "mismatch on-disk border.bin vs layouts.json",
+        bw=2,
+        bh=2,
+        doc=_synth_map_doc(include_border=False),
+        prior=b"\x00\x00",
+    )
+    # pret layouts are 0×0 or a positive pair, never a single zero dimension.
+    fail_closed(
+        "mixed zero border dims",
+        bw=0,
+        bh=2,
+        doc=_synth_map_doc(include_border=False),
+        prior=b"",
+    )
+
+
 def run_self_check() -> int:
-    """Decomp-free pack/unpack identity plus the cross-file rollback drill.
+    """Decomp-free pack/unpack, border.bin dry-run/--write parity, and rollback.
 
     This does not replace the PalletTown / OaksLab byte-identity ``--write``
     gate, which needs a local pokefirered checkout.
@@ -972,6 +1294,8 @@ def run_self_check() -> int:
                 and map_json.read_bytes() == old_json,
                 msg,
             )
+
+    _self_check_border_parity(check)
 
     if failures:
         print(f"self-check: {len(failures)} failed", file=sys.stderr)
