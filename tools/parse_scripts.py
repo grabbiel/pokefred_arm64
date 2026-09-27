@@ -130,6 +130,17 @@ def find_label_in_inc(inc_path: Path, label: str) -> tuple[int, list[str]] | Non
 
 def resolve_symbol(decomp: Path, map_name: str, sym: str, kind: str) -> dict:
     info: dict = {"symbol": sym, "kind": kind, "definition": None, "summary": None}
+    if kind == "item" or sym.startswith("ITEM_"):
+        info["kind"] = "item"
+        path = decomp / "include" / "constants" / "items.h"
+        if path.is_file():
+            for i, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                if re.search(rf"#define\s+{re.escape(sym)}\b", line):
+                    info["definition"] = f"include/constants/items.h:{i}"
+                    info["summary"] = "Hidden/given item constant; see items.h."
+                    return info
+        info["summary"] = "Item constant; see items.h."
+        return info
     if kind == "flag" or sym.startswith("FLAG_"):
         info["kind"] = "flag"
         path = decomp / "include" / "constants" / "flags.h"
