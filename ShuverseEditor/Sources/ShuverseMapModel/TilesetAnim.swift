@@ -9,6 +9,30 @@ public struct AtlasRowSpan: Equatable {
         self.firstRow = firstRow
         self.rowCount = rowCount
     }
+
+    /// Sorts row ranges and merges overlaps. A later animation clip can share
+    /// one memcpy with rows a ring slot has not flushed yet.
+    public static func union(_ spans: [AtlasRowSpan]) -> [AtlasRowSpan] {
+        let ordered = spans.filter { $0.rowCount > 0 }.sorted { lhs, rhs in
+            if lhs.firstRow != rhs.firstRow { return lhs.firstRow < rhs.firstRow }
+            return lhs.rowCount < rhs.rowCount
+        }
+        var merged: [AtlasRowSpan] = []
+        for span in ordered {
+            guard let last = merged.last else {
+                merged.append(span)
+                continue
+            }
+            let lastEnd = last.firstRow + last.rowCount
+            if span.firstRow <= lastEnd {
+                let end = max(lastEnd, span.firstRow + span.rowCount)
+                merged[merged.count - 1] = AtlasRowSpan(firstRow: last.firstRow, rowCount: end - last.firstRow)
+            } else {
+                merged.append(span)
+            }
+        }
+        return merged
+    }
 }
 
 /// One 8×8 tile's palette indices, repeated `tileCount` times, row-major.
@@ -64,16 +88,25 @@ public struct TilesetAnimStep: Equatable {
     }
 }
 
-/// Pallet Town water stub.
+/// Pallet Town water and flower stubs.
 ///
 /// pret `InitTilesetAnim_General` wraps a counter at 640. `TilesetAnim_General`
 /// copies `water_current_landwatersedge` when `counter % 16 == 1`, frame
-/// `counter / 16`, onto 4bpp tile 416 for 48 tiles. Those frames live in
-/// separate PNGs. This table does not load them.
+/// `counter / 16`, onto 4bpp tile 416 for 48 tiles, and copies `flower` when
+/// `counter % 16 == 2`, frame `counter / 16`, onto tiles 508…511 (4 tiles,
+/// 5 frames). Those frames live in separate graphics. This table does not
+/// load them.
 ///
-/// Pallet Town only samples tiles 416…419 (metatiles 291, 298, 299, 300, 721,
-/// 722). The stub keeps that id, period, and phase, and builds eight frames by
-/// rotating each baked tile up one pixel per frame. Frame 0 is the baked tile.
+/// Pallet Town only samples water tiles 416…419 (metatiles 291, 298, 299, 300,
+/// 721, 722). The water stub keeps that id, period, and phase, and builds
+/// eight frames by rotating each baked tile up one pixel per frame. Frame 0
+/// is the baked tile.
+///
+/// Flower tiles 508…511 are the top layer of metatile 4, which Pallet Town
+/// places. The flower stub keeps pret's id, period, phase, and frame count,
+/// and rotates each baked tile left one pixel per frame. Sand-water edge
+/// (tile 464, 18 tiles, `counter % 8 == 0`) is not in this table: the Pallet
+/// layout does not use those metatiles.
 public enum PalletTownTilesetAnim {
     public static let counterMax = 640
     public static let ticksPerSecond = 60
@@ -84,12 +117,20 @@ public enum PalletTownTilesetAnim {
     public static let waterFrameCount = 8
     public static let waterPeriod = 16
     public static let waterPhase = 1
+    public static let flowerBaseTileId = 508
+    public static let flowerTileCount = 4
+    /// Top layer of this metatile is tiles 508…511.
+    public static let flowerMetatileId = 4
+    public static let flowerFrameCount = 5
+    public static let flowerPeriod = 16
+    public static let flowerPhase = 2
 
     public static func makeTable(from tileset: GBATileset) -> TilesetAnimTable? {
         guard tileset.atlasWidth == GBATileset.atlasWidth,
               tileset.atlasHeight == GBATileset.atlasHeight,
               tileset.indices.count == tileset.atlasWidth * tileset.atlasHeight,
-              let frames = waterFrames(in: tileset.indices, atlasWidth: tileset.atlasWidth) else {
+              let water = waterFrames(in: tileset.indices, atlasWidth: tileset.atlasWidth),
+              let flower = flowerFrames(in: tileset.indices, atlasWidth: tileset.atlasWidth) else {
             return nil
         }
         return TilesetAnimTable(
@@ -98,9 +139,16 @@ public enum PalletTownTilesetAnim {
                 TilesetAnimClip(
                     baseTileId: waterBaseTileId,
                     tileCount: waterTileCount,
-                    frames: frames,
+                    frames: water,
                     period: waterPeriod,
                     phase: waterPhase
+                ),
+                TilesetAnimClip(
+                    baseTileId: flowerBaseTileId,
+                    tileCount: flowerTileCount,
+                    frames: flower,
+                    period: flowerPeriod,
+                    phase: flowerPhase
                 ),
             ]
         )
@@ -112,6 +160,15 @@ public enum PalletTownTilesetAnim {
         }
         return (0..<waterFrameCount).map { frame in
             TilesetAnimFrame(indices: scrollUp(base, tileCount: waterTileCount, rows: frame))
+        }
+    }
+
+    static func flowerFrames(in indices: [UInt8], atlasWidth: Int) -> [TilesetAnimFrame]? {
+        guard let base = readTiles(indices, atlasWidth: atlasWidth, tileId: flowerBaseTileId, count: flowerTileCount) else {
+            return nil
+        }
+        return (0..<flowerFrameCount).map { frame in
+            TilesetAnimFrame(indices: scrollLeft(base, tileCount: flowerTileCount, columns: frame))
         }
     }
 
@@ -137,6 +194,23 @@ public enum PalletTownTilesetAnim {
                 let sourceY = (y + shift) % 8
                 for x in 0..<8 {
                     out[origin + y * 8 + x] = tiles[origin + sourceY * 8 + x]
+                }
+            }
+        }
+        return out
+    }
+
+    /// `columns == 0` leaves the tile unchanged. Larger values move each column left.
+    static func scrollLeft(_ tiles: [UInt8], tileCount: Int, columns: Int) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: tiles.count)
+        let shift = ((columns % 8) + 8) % 8
+        guard tiles.count >= tileCount * 64 else { return out }
+        for tile in 0..<tileCount {
+            let origin = tile * 64
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    let sourceX = (x + shift) % 8
+                    out[origin + y * 8 + x] = tiles[origin + y * 8 + sourceX]
                 }
             }
         }

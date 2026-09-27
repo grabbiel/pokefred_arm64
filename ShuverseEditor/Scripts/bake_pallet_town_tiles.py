@@ -160,6 +160,11 @@ Metatiles (pret, not a pixel_pipeline format):
 The canvas places primary tiles at ids 0–639 and secondary tiles at 640+,
 and builds BG palettes the way pret does: primary banks 0–6 (color 0 forced
 black) and secondary banks 7–12 in slots 7–12.
+
+Tileset animation frames are not in these files. pret stores
+water_current_landwatersedge and flower frames as separate graphics. The editor
+stubs water tiles 416–419 and flower tiles 508–511 (metatile 4) in code
+(PalletTownTilesetAnim); see docs/metal_gpu.md.
 """
 
 

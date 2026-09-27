@@ -426,6 +426,11 @@ final class MapModelTests: XCTestCase {
         XCTAssertTrue(dirty.isDirty(0))
         dirty.markAllDirty()
         XCTAssertTrue(dirty.isDirty(1))
+        XCTAssertTrue(dirty.isAnyDirty)
+        dirty.markClean(0)
+        dirty.markClean(1)
+        dirty.markClean(2)
+        XCTAssertFalse(dirty.isAnyDirty)
 
         let palette = MetatileColor.paletteComponents()
         XCTAssertEqual(palette.count, 1024 * 4)
@@ -507,6 +512,7 @@ final class MapModelTests: XCTestCase {
         XCTAssertTrue(canvas.contains("PalletTownTilesetAnim"))
         XCTAssertTrue(canvas.contains("rewriteIndexRows"))
         XCTAssertTrue(canvas.contains("water frame"))
+        XCTAssertTrue(canvas.contains("flower frame"))
         XCTAssertTrue(canvas.contains("sprites "))
         let overlay = try String(contentsOf: root.appendingPathComponent("App/ImGuiOverlayView.swift"), encoding: .utf8)
         XCTAssertTrue(overlay.contains("isPaused = false"))
@@ -697,6 +703,7 @@ final class MapModelTests: XCTestCase {
         let directory = try XCTUnwrap(TilesetLocator.find(startingAt: [packageRoot()]))
         let tileset = try GBATileset.loadPalletTown(from: directory)
         let table = try XCTUnwrap(PalletTownTilesetAnim.makeTable(from: tileset))
+        XCTAssertEqual(table.clips.count, 2)
         let clip = try XCTUnwrap(table.clips.first)
         XCTAssertEqual(clip.baseTileId, 416)
         XCTAssertEqual(clip.tileCount, 4)
@@ -775,8 +782,10 @@ final class MapModelTests: XCTestCase {
         while applied < 2 {
             let steps = player.advance()
             for step in steps {
+                let steppedClip = table.clips[step.clipIndex]
+                guard steppedClip.baseTileId == PalletTownTilesetAnim.waterBaseTileId else { continue }
                 _ = TilesetAnimBlit.apply(
-                    table.clips[step.clipIndex],
+                    steppedClip,
                     frame: step.frameIndex,
                     to: &stepped.indices,
                     atlasWidth: stepped.atlasWidth,
@@ -788,6 +797,109 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(player.counter, 17)
         XCTAssertEqual(stepped.indices, animated.indices)
         XCTAssertNotEqual(stepped.sample(metatileId: 299, x: 0, y: 2), tileset.sample(metatileId: 299, x: 0, y: 2))
+    }
+
+    func testPalletFlowerStubRewritesAtlasRows() throws {
+        let directory = try XCTUnwrap(TilesetLocator.find(startingAt: [packageRoot()]))
+        let tileset = try GBATileset.loadPalletTown(from: directory)
+        let table = try XCTUnwrap(PalletTownTilesetAnim.makeTable(from: tileset))
+        let clip = try XCTUnwrap(table.clips.last)
+        XCTAssertEqual(clip.baseTileId, PalletTownTilesetAnim.flowerBaseTileId)
+        XCTAssertEqual(clip.tileCount, PalletTownTilesetAnim.flowerTileCount)
+        XCTAssertEqual(clip.frames.count, PalletTownTilesetAnim.flowerFrameCount)
+        XCTAssertEqual(clip.period, PalletTownTilesetAnim.flowerPeriod)
+        XCTAssertEqual(clip.phase, PalletTownTilesetAnim.flowerPhase)
+        XCTAssertEqual(PalletTownTilesetAnim.flowerMetatileId, 4)
+        let top = (4..<8).map { slot in
+            GBAScreenEntry(raw: tileset.metatileEntries[PalletTownTilesetAnim.flowerMetatileId * 8 + slot]).tileId
+        }
+        XCTAssertEqual(top, [508, 509, 510, 511] as [UInt16])
+
+        var frame0 = tileset
+        let span0 = try XCTUnwrap(TilesetAnimBlit.apply(
+            clip,
+            frame: 0,
+            to: &frame0.indices,
+            atlasWidth: frame0.atlasWidth,
+            atlasHeight: frame0.atlasHeight
+        ))
+        XCTAssertEqual(span0, AtlasRowSpan(firstRow: 248, rowCount: 8))
+        XCTAssertEqual(frame0.indices, tileset.indices)
+
+        var animated = tileset
+        let span1 = try XCTUnwrap(TilesetAnimBlit.apply(
+            clip,
+            frame: 1,
+            to: &animated.indices,
+            atlasWidth: animated.atlasWidth,
+            atlasHeight: animated.atlasHeight
+        ))
+        XCTAssertEqual(span1, span0)
+        XCTAssertNotEqual(animated.indices, tileset.indices)
+        for tile in 0..<PalletTownTilesetAnim.flowerTileCount {
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    XCTAssertEqual(
+                        atlasIndex(animated.indices, tile: PalletTownTilesetAnim.flowerBaseTileId + tile, x: x, y: y),
+                        atlasIndex(tileset.indices, tile: PalletTownTilesetAnim.flowerBaseTileId + tile, x: (x + 1) % 8, y: y)
+                    )
+                }
+            }
+        }
+        for tile in [416, 419, 464, 507, 512] {
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    XCTAssertEqual(
+                        atlasIndex(animated.indices, tile: tile, x: x, y: y),
+                        atlasIndex(tileset.indices, tile: tile, x: x, y: y)
+                    )
+                }
+            }
+        }
+        let before = tileset.sample(metatileId: PalletTownTilesetAnim.flowerMetatileId, x: 7, y: 1)
+        let after = animated.sample(metatileId: PalletTownTilesetAnim.flowerMetatileId, x: 7, y: 1)
+        XCTAssertEqual(before.a, 1, accuracy: 0.0001)
+        XCTAssertEqual(after.a, 1, accuracy: 0.0001)
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(animated.sample(metatileId: 299, x: 0, y: 2), tileset.sample(metatileId: 299, x: 0, y: 2))
+        XCTAssertEqual(animated.sample(metatileId: 28, x: 5, y: 0), tileset.sample(metatileId: 28, x: 5, y: 0))
+
+        var player = TilesetAnimPlayer(table: table)
+        var hits: [(counter: Int, tile: Int, frame: Int)] = []
+        for _ in 0..<33 {
+            let steps = player.advance()
+            XCTAssertLessThanOrEqual(steps.count, 1)
+            for step in steps {
+                let steppedClip = table.clips[step.clipIndex]
+                hits.append((player.counter, steppedClip.baseTileId, step.frameIndex))
+            }
+        }
+        XCTAssertEqual(
+            hits.map(\.counter),
+            [1, 2, 17, 18, 33]
+        )
+        XCTAssertEqual(
+            hits.map(\.tile),
+            [
+                PalletTownTilesetAnim.waterBaseTileId,
+                PalletTownTilesetAnim.flowerBaseTileId,
+                PalletTownTilesetAnim.waterBaseTileId,
+                PalletTownTilesetAnim.flowerBaseTileId,
+                PalletTownTilesetAnim.waterBaseTileId,
+            ]
+        )
+        XCTAssertEqual(hits.map(\.frame), [0, 0, 1, 1, 2])
+        XCTAssertEqual(
+            AtlasRowSpan.union([
+                AtlasRowSpan(firstRow: 248, rowCount: 8),
+                AtlasRowSpan(firstRow: 208, rowCount: 8),
+                AtlasRowSpan(firstRow: 208, rowCount: 8),
+            ]),
+            [
+                AtlasRowSpan(firstRow: 208, rowCount: 8),
+                AtlasRowSpan(firstRow: 248, rowCount: 8),
+            ]
+        )
     }
 
     func testIndexAtlasRowCopyLeavesPadding() throws {

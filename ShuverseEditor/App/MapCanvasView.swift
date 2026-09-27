@@ -44,6 +44,7 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     private var animPlayer: TilesetAnimPlayer?
     private var animTimer: Timer?
     private var displayedAnimFrame: Int?
+    private var displayedFlowerFrame: Int?
 
     private var dragStart: NSPoint?
     private var dragCamera: MapCamera?
@@ -105,6 +106,9 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         }
         if let displayedAnimFrame {
             text += "   water frame \(displayedAnimFrame)"
+        }
+        if let displayedFlowerFrame {
+            text += "   flower frame \(displayedFlowerFrame)"
         }
         return text
     }
@@ -355,30 +359,36 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             reportTilesetFailure()
             return false
         }
-        guard let table = PalletTownTilesetAnim.makeTable(from: base), let clip = table.clips.first else {
+        guard let table = PalletTownTilesetAnim.makeTable(from: base), !table.clips.isEmpty else {
             gpu.setStatusNote("Tileset animation stub was not applied.")
             publishRendererNote()
             return false
         }
         var graphics = base
-        guard let span = TilesetAnimBlit.apply(
-            clip,
-            frame: 0,
-            to: &graphics.indices,
-            atlasWidth: graphics.atlasWidth,
-            atlasHeight: graphics.atlasHeight
-        ) else {
-            gpu.failTileset("Could not copy tileset animation frame 0 onto tile \(clip.baseTileId).")
-            reportTilesetFailure()
-            return false
+        var spans: [AtlasRowSpan] = []
+        spans.reserveCapacity(table.clips.count)
+        for clip in table.clips {
+            guard let span = TilesetAnimBlit.apply(
+                clip,
+                frame: 0,
+                to: &graphics.indices,
+                atlasWidth: graphics.atlasWidth,
+                atlasHeight: graphics.atlasHeight
+            ) else {
+                gpu.failTileset("Could not copy tileset animation frame 0 onto tile \(clip.baseTileId).")
+                reportTilesetFailure()
+                return false
+            }
+            spans.append(span)
         }
-        guard gpu.rewriteIndexRows(graphics.indices, spans: [span]) else {
+        guard gpu.rewriteIndexRows(graphics.indices, spans: spans) else {
             reportTilesetFailure()
             return false
         }
         animGraphics = graphics
         animPlayer = TilesetAnimPlayer(table: table)
         displayedAnimFrame = 0
+        displayedFlowerFrame = 0
         let timer = Timer(timeInterval: 1.0 / Double(PalletTownTilesetAnim.ticksPerSecond), repeats: true) { [weak self] _ in
             self?.tickTilesetAnimation()
         }
@@ -393,8 +403,9 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         animTimer = nil
         animPlayer = nil
         animGraphics = nil
-        let wasShowing = displayedAnimFrame != nil
+        let wasShowing = displayedAnimFrame != nil || displayedFlowerFrame != nil
         displayedAnimFrame = nil
+        displayedFlowerFrame = nil
         if wasShowing {
             onCameraChange?(statusLine())
         }
@@ -425,6 +436,8 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             spans.append(span)
             if clip.baseTileId == PalletTownTilesetAnim.waterBaseTileId {
                 displayedAnimFrame = step.frameIndex
+            } else if clip.baseTileId == PalletTownTilesetAnim.flowerBaseTileId {
+                displayedFlowerFrame = step.frameIndex
             }
         }
         animGraphics = graphics

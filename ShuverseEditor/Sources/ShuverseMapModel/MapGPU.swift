@@ -154,6 +154,10 @@ public struct RingSlotDirty: Equatable {
         return (mask & UInt8(1 << slot)) != 0
     }
 
+    public var isAnyDirty: Bool {
+        mask != 0
+    }
+
     private static var allBits: UInt8 {
         UInt8((1 << slotCount) - 1)
     }
