@@ -4,6 +4,11 @@
 Rebuild pret/pokefirered layout map.bin (and optionally map.json / border.bin)
 from Map Parser JSON. DEFAULT is --dry-run: never writes into the decomp unless
 --write is passed explicitly.
+
+--write reads each target's original bytes, then replaces map.bin, border.bin,
+and map.json via atomic rename. If a later file fails, files already replaced
+in that map's write set are restored from those originals and the process
+exits non-zero naming the failed step.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 DEFAULT_DECOMP = Path("/Users/rumpology/code/repo/32bit/pokefirered")
@@ -390,6 +396,129 @@ def atomic_write(target: Path, data: bytes) -> None:
         raise
 
 
+def _read_original_bytes(path: Path) -> bytes | None:
+    """Return file bytes, or None if path does not exist.
+
+    A path that exists but is not a regular file is refused so --write does
+    not replace a directory or device node.
+    """
+    if path.is_file():
+        return path.read_bytes()
+    if path.exists():
+        raise SerializeError(
+            f"--write failed at step 'read original' ({path}): "
+            "exists but is not a regular file; no files overwritten"
+        )
+    return None
+
+
+def _format_write_failure(
+    step: str,
+    path: Path,
+    exc: BaseException,
+    restored: list[str],
+    removed: list[str],
+    rollback_failed: list[tuple[str, Path, BaseException]],
+) -> str:
+    parts = [f"--write failed at step '{step}' ({path}): {exc}"]
+    if restored:
+        parts.append("restored prior files: " + ", ".join(restored))
+    if removed:
+        parts.append(
+            "removed files that did not exist before this write: "
+            + ", ".join(removed)
+        )
+    if rollback_failed:
+        details = "; ".join(
+            f"{name} ({failed_path}): {err}"
+            for name, failed_path, err in rollback_failed
+        )
+        parts.append("rollback failed for " + details)
+    if not restored and not removed and not rollback_failed:
+        parts.append("no files overwritten")
+    return "; ".join(parts)
+
+
+def write_map_set(
+    steps: list[tuple[str, Path, bytes]],
+    *,
+    writer: Callable[[Path, bytes], None] = atomic_write,
+) -> None:
+    """Replace each (step name, path, bytes) via ``writer`` (default atomic_write).
+
+    Originals are read into memory before any replace. If a later step fails,
+    files already overwritten are restored by calling ``writer`` with those
+    saved bytes. A file that did not exist beforehand is removed. Raises
+    SerializeError naming the failed step. Rollback of one file does not
+    cancel attempts to restore the others.
+    """
+    originals: dict[Path, bytes | None] = {}
+    for label, path, _data in steps:
+        if path in originals:
+            continue
+        try:
+            originals[path] = _read_original_bytes(path)
+        except OSError as e:
+            raise SerializeError(
+                f"--write failed at step 'read original {label}' ({path}): {e}; "
+                "no files overwritten"
+            ) from e
+
+    written: list[tuple[str, Path]] = []
+    for label, path, data in steps:
+        print(f"  writing {label} ({len(data)} bytes) ...", flush=True)
+        try:
+            writer(path, data)
+        except Exception as e:
+            restored, removed, rollback_failed = _rollback_written(
+                written, originals, writer
+            )
+            raise SerializeError(
+                _format_write_failure(
+                    label, path, e, restored, removed, rollback_failed
+                )
+            ) from e
+        written.append((label, path))
+        print(f"  wrote {path}", flush=True)
+
+
+def _rollback_written(
+    written: list[tuple[str, Path]],
+    originals: dict[Path, bytes | None],
+    writer: Callable[[Path, bytes], None],
+) -> tuple[list[str], list[str], list[tuple[str, Path, BaseException]]]:
+    """Restore files already replaced. Reverse order; each path at most once."""
+    restored: list[str] = []
+    removed: list[str] = []
+    failed: list[tuple[str, Path, BaseException]] = []
+    seen: set[Path] = set()
+    for step_label, path in reversed(written):
+        if path in seen:
+            continue
+        seen.add(path)
+        original = originals[path]
+        try:
+            if original is None:
+                path.unlink(missing_ok=True)
+                removed.append(step_label)
+                print(
+                    f"  removed {path} (did not exist before this write)",
+                    flush=True,
+                )
+            else:
+                writer(path, original)
+                restored.append(step_label)
+                print(f"  restored {path}", flush=True)
+        except Exception as err:
+            failed.append((step_label, path, err))
+            print(
+                f"  rollback failed for {path}: {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+    return restored, removed, failed
+
+
 def slim_compare_events(doc: dict, map_json: dict) -> list[str]:
     """Semantic event comparison (order-sensitive lists; field subset from parser).
 
@@ -575,17 +704,15 @@ def serialize_one(
             print(f"  {p}")
         return 1
 
-    print(f"  writing map.bin ({len(packed)} bytes) ...")
-    atomic_write(map_bin_path, packed)
-    print(f"  wrote {map_bin_path}")
-
-    print(f"  writing border.bin ({len(border_packed)} bytes) ...")
-    atomic_write(border_path, border_packed)
-    print(f"  wrote {border_path}")
-
-    print(f"  writing map.json ({len(map_json_bytes)} bytes) ...")
-    atomic_write(map_json_path, map_json_bytes)
-    print(f"  wrote {map_json_path}")
+    # One map's write set. Originals are snapshotted inside write_map_set;
+    # a failure after any successful replace restores those prior bytes.
+    write_map_set(
+        [
+            ("map.bin", map_bin_path, packed),
+            ("border.bin", border_path, border_packed),
+            ("map.json", map_json_path, map_json_bytes),
+        ]
+    )
     return 0
 
 
@@ -639,11 +766,224 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Allow writing even if target paths are git-dirty",
     )
+    p.add_argument(
+        "--self-check",
+        action="store_true",
+        default=False,
+        help=(
+            "Pack/unpack synthetic blockdata and drill cross-file --write "
+            "rollback in a temp directory. No decomp checkout required."
+        ),
+    )
     return p
+
+
+def run_self_check() -> int:
+    """Decomp-free pack/unpack identity plus the cross-file rollback drill.
+
+    This does not replace the PalletTown / OaksLab byte-identity ``--write``
+    gate, which needs a local pokefirered checkout.
+    """
+    failures: list[str] = []
+
+    def check(name: str, cond: bool, detail: str = "") -> None:
+        if cond:
+            print(f"self-check: {name} OK", flush=True)
+            return
+        msg = f"self-check: {name} FAILED"
+        if detail:
+            msg = f"{msg} ({detail})"
+        print(msg, file=sys.stderr, flush=True)
+        failures.append(msg)
+
+    ids = [0, 1, 1023, 42]
+    attrs = [0, 1, 63, 7]
+    try:
+        packed = pack_map_bin(ids, attrs)
+        got_ids, got_attrs = unpack_map_bin(packed)
+        check(
+            "pack/unpack synthetic blockdata",
+            got_ids == ids and got_attrs == attrs and len(packed) == 8,
+            f"got ids={got_ids} attrs={got_attrs} len={len(packed)}",
+        )
+        cell = struct.unpack_from(MAP_CELL_FMT, packed, 4)[0]
+        check(
+            "cell packing (attr<<10)|id",
+            cell == ((63 << MAP_ATTR_SHIFT) | 1023),
+            f"cell=0x{cell:04x}",
+        )
+    except SerializeError as e:
+        check("pack/unpack synthetic blockdata", False, str(e))
+
+    try:
+        pack_map_bin([METATILE_ID_MAX + 1], [0])
+        check("reject metatileId 1024", False, "no error")
+    except SerializeError:
+        check("reject metatileId 1024", True)
+
+    try:
+        pack_map_bin([0], [MAP_ATTR_MAX + 1])
+        check("reject mapAttribute 64", False, "no error")
+    except SerializeError:
+        check("reject mapAttribute 64", True)
+
+    try:
+        unpack_map_bin(b"\x00")
+        check("reject odd bin length", False, "no error")
+    except SerializeError:
+        check("reject odd bin length", True)
+
+    with tempfile.TemporaryDirectory(prefix="serialize-map-selfcheck-") as tmp:
+        root = Path(tmp)
+        map_bin = root / "map.bin"
+        border_bin = root / "border.bin"
+        map_json = root / "map.json"
+        old_map = b"OLD-MAP"
+        old_border = b"OLD-BORDER"
+        old_json = b'{"id":"OLD"}\n'
+        new_map = b"NEW-MAP-BYTES"
+        new_border = b"NEW-BORDER-BYTES"
+        new_json = b'{"id":"NEW"}\n'
+        map_bin.write_bytes(old_map)
+        border_bin.write_bytes(old_border)
+        map_json.write_bytes(old_json)
+
+        seen: list[tuple[str, bytes]] = []
+
+        def fail_on_json(path: Path, data: bytes) -> None:
+            if path.name == "map.json" and data == new_json:
+                raise OSError("injected map.json failure")
+            atomic_write(path, data)
+            seen.append((path.name, data))
+
+        try:
+            write_map_set(
+                [
+                    ("map.bin", map_bin, new_map),
+                    ("border.bin", border_bin, new_border),
+                    ("map.json", map_json, new_json),
+                ],
+                writer=fail_on_json,
+            )
+            check("rollback after map.json failure", False, "write_map_set returned")
+        except SerializeError as e:
+            msg = str(e)
+            check(
+                "rollback after map.json failure",
+                "map.json" in msg
+                and "injected map.json failure" in msg
+                and "restored prior files: border.bin, map.bin" in msg
+                and map_bin.read_bytes() == old_map
+                and border_bin.read_bytes() == old_border
+                and map_json.read_bytes() == old_json
+                and (map_bin.name, new_map) in seen
+                and (border_bin.name, new_border) in seen
+                and (border_bin.name, old_border) in seen
+                and (map_bin.name, old_map) in seen,
+                msg,
+            )
+
+        # First step fails before any replace.
+        map_bin.write_bytes(old_map)
+
+        def fail_first(path: Path, data: bytes) -> None:
+            raise OSError("injected map.bin failure")
+
+        try:
+            write_map_set(
+                [("map.bin", map_bin, new_map)],
+                writer=fail_first,
+            )
+            check("first-step failure leaves original", False, "write_map_set returned")
+        except SerializeError as e:
+            msg = str(e)
+            check(
+                "first-step failure leaves original",
+                "step 'map.bin'" in msg
+                and "no files overwritten" in msg
+                and map_bin.read_bytes() == old_map,
+                msg,
+            )
+
+        # border.bin did not exist; a later failure must remove it.
+        border_bin.unlink()
+        map_bin.write_bytes(old_map)
+        map_json.write_bytes(old_json)
+
+        def fail_json_only(path: Path, data: bytes) -> None:
+            if path.name == "map.json":
+                raise OSError("injected map.json failure")
+            atomic_write(path, data)
+
+        try:
+            write_map_set(
+                [
+                    ("map.bin", map_bin, new_map),
+                    ("border.bin", border_bin, new_border),
+                    ("map.json", map_json, new_json),
+                ],
+                writer=fail_json_only,
+            )
+            check("remove file that did not exist", False, "write_map_set returned")
+        except SerializeError as e:
+            msg = str(e)
+            check(
+                "remove file that did not exist",
+                "removed files that did not exist before this write: border.bin" in msg
+                and "restored prior files: map.bin" in msg
+                and map_bin.read_bytes() == old_map
+                and not border_bin.exists()
+                and map_json.read_bytes() == old_json,
+                msg,
+            )
+
+        # Restore of border.bin fails; map.bin must still be put back.
+        border_bin.write_bytes(old_border)
+        map_bin.write_bytes(old_map)
+        map_json.write_bytes(old_json)
+
+        def fail_json_and_border_restore(path: Path, data: bytes) -> None:
+            if path.name == "map.json" and data == new_json:
+                raise OSError("injected map.json failure")
+            if path.name == "border.bin" and data == old_border:
+                raise OSError("injected border.bin rollback failure")
+            atomic_write(path, data)
+
+        try:
+            write_map_set(
+                [
+                    ("map.bin", map_bin, new_map),
+                    ("border.bin", border_bin, new_border),
+                    ("map.json", map_json, new_json),
+                ],
+                writer=fail_json_and_border_restore,
+            )
+            check("partial rollback reports both outcomes", False, "write_map_set returned")
+        except SerializeError as e:
+            msg = str(e)
+            check(
+                "partial rollback reports both outcomes",
+                "step 'map.json'" in msg
+                and "restored prior files: map.bin" in msg
+                and "rollback failed for border.bin" in msg
+                and "injected border.bin rollback failure" in msg
+                and map_bin.read_bytes() == old_map
+                and border_bin.read_bytes() == new_border
+                and map_json.read_bytes() == old_json,
+                msg,
+            )
+
+    if failures:
+        print(f"self-check: {len(failures)} failed", file=sys.stderr)
+        return 1
+    print("self-check: passed")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.self_check:
+        return run_self_check()
     query = args.doc_flag or args.doc
     if not query:
         print("error: provide a map name or --doc path to parsed JSON", file=sys.stderr)
