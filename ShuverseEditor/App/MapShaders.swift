@@ -259,7 +259,7 @@ enum MapShaders {
     }
 
     // Top layer only (the tree leaves). Index 0 discards so the hole does not
-    // write depth and the sprite stub can show through onto the ground.
+    // write depth. Object sprites are closer and cover these leaves.
     fragment float4 map_canopy_fragment(
         Varying in [[stage_in]],
         texture2d<uint, access::read> indices [[texture(0)]],

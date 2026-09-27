@@ -25,12 +25,12 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
 
     private var grid: MapMetatileGrid?
     private var canopy: [MapCanopyInstance] = []
-    private var depthSprites: [MapQuadInstance] = []
+    private var sprites: [MapQuadInstance] = []
     private var markers: [MapQuadInstance] = []
     private var selectionInstances: [MapQuadInstance] = []
     private var gridDirty = RingSlotDirty()
     private var canopyDirty = RingSlotDirty()
-    private var depthSpriteDirty = RingSlotDirty()
+    private var spriteDirty = RingSlotDirty()
     private var markerDirty = RingSlotDirty()
     private var selectionDirty = RingSlotDirty()
 
@@ -66,18 +66,18 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         if let map {
             grid = MapMetatileGrid.make(map: map)
             canopy = MapDrawListBuilder.canopy(on: map)
-            depthSprites = MapDrawListBuilder.depthSprites(on: map)
+            sprites = MapDrawListBuilder.sprites(on: map)
             markers = MapDrawListBuilder.markers(on: map)
         } else {
             grid = nil
             canopy = []
-            depthSprites = []
+            sprites = []
             markers = []
         }
         selectionInstances = []
         gridDirty.markAllDirty()
         canopyDirty.markAllDirty()
-        depthSpriteDirty.markAllDirty()
+        spriteDirty.markAllDirty()
         markerDirty.markAllDirty()
         selectionDirty.markAllDirty()
         bindTileset(for: map)
@@ -99,6 +99,9 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         }
         if !canopy.isEmpty {
             text += "   canopy \(canopy.count)"
+        }
+        if !sprites.isEmpty {
+            text += "   sprites \(sprites.count)"
         }
         if let displayedAnimFrame {
             text += "   water frame \(displayedAnimFrame)"
@@ -153,13 +156,13 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             slot: slot,
             grid: grid,
             canopy: canopy,
-            depthSprites: depthSprites,
+            sprites: sprites,
             markers: markers,
             selection: selectionInstances,
             uniforms: makeUniforms(),
             gridDirty: &gridDirty,
             canopyDirty: &canopyDirty,
-            depthSpriteDirty: &depthSpriteDirty,
+            spriteDirty: &spriteDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
