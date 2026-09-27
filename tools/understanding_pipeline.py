@@ -259,6 +259,7 @@ def run_cycle(
         "corridor_preset": list(ps.CORRIDOR_MAPS),
         "cerulean_cluster_preset": list(ps.CERULEAN_CLUSTER_MAPS),
         "vermilion_cluster_preset": list(ps.VERMILION_CLUSTER_MAPS),
+        "lavender_cluster_preset": list(ps.LAVENDER_CLUSTER_MAPS),
         "script_coverage_preset": list(ps.SCRIPT_COVERAGE_MAPS),
         "note": (
             "Additive *.scripts.json via tools/parse_scripts.py (stdlib). "
@@ -301,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--scripts-coverage",
         action="store_true",
-        help="Also refresh all script-coverage presets (slices 1–3 union) via parse_scripts",
+        help="Also refresh all script-coverage presets (slices 1–4 union) via parse_scripts",
     )
     p.add_argument(
         "--scripts-corridor",

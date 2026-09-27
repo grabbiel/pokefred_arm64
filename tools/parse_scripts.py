@@ -65,7 +65,7 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_HiddenItem|HiddenItemScript", re.I), "Hidden item pickup (shared)."),
     # Cerulean / Mt. Moon / Nugget Bridge / Bill corridor
     (re.compile(r"EventScript_Misty|DefeatedMisty|GiveTM03|TM03", re.I), "Gym Leader Misty battle / TM reward."),
-    (re.compile(r"BikeShop|Bicycle\b|BikeVoucher", re.I), "Cerulean Bike Shop: bicycle / voucher exchange."),
+    (re.compile(r"BikeShop|Bicycle\b", re.I), "Cerulean Bike Shop: bicycle / voucher exchange."),
     (re.compile(r"CeruleanCaveGuard", re.I), "Cerulean Cave entrance guard (story-gated)."),
     (re.compile(r"DomeFossil|HelixFossil", re.I), "Mt. Moon fossil choice (Dome vs Helix)."),
     (re.compile(r"Grunt|Rocket\b", re.I), "Team Rocket grunt battle / scene."),
@@ -86,6 +86,7 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"SnorlaxNotice|HarborSign|PokemonFanClubSign", re.I), "Vermilion harbor / Snorlax / Fan Club sign text."),
     (re.compile(r"PokemonFanClub_EventScript_Chairman|BikeVoucher|AlreadyHeardStory|ChairmanStory|NoRoomForBikeVoucher", re.I), "Pokémon Fan Club chairman: Bike Voucher gift."),
     (re.compile(r"PokemonFanClub_EventScript_(FatMan|Woman|Pikachu|Seel|WorkerF)", re.I), "Pokémon Fan Club NPC / mascot dialogue."),
+    (re.compile(r"FishingGuruBrother|SuperRod|GiveSuperRod|NoRoomForSuperRod|MagikarpRecord", re.I), "Fishing Guru brother: Super Rod gift / Magikarp size record."),
     (re.compile(r"FishingGuru|OldRod|AlreadyGotOldRod|GiveOldRod|NoRoomForOldRod", re.I), "Fishing Guru: Old Rod gift."),
     (re.compile(r"Zapdos|Electrode\d?\b", re.I), "Power Plant static encounter (Zapdos / Electrode)."),
     (re.compile(r"CaptainsOffice_EventScript_Captain|AlreadyGotCut|NoRoomForCut", re.I), "SS Anne captain: HM01 Cut gift / seasickness scene."),
@@ -94,6 +95,18 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_Machop\b", re.I), "Vermilion Machop NPC (strength demo / flavor)."),
     (re.compile(r"NorthRockTunnelSign|SouthRockTunnelSign|PowerPlantSign|DiglettsCaveSign|RouteSign", re.I), "Route / cave / plant area sign."),
     (re.compile(r"SSAnne_Kitchen_EventScript_|SalmonDuSalad|EelsAuBarbecue|PrimeBeefsteak", re.I), "SS Anne kitchen chef / menu flavor."),
+    # Lavender / Pokémon Tower / Route8·12·13 / E-W Underground / Celadon approach
+    (re.compile(r"NameRater|ChooseNewNickname|DontRateNickname|CantNickname", re.I), "Name Rater: critique / change a Pokémon nickname."),
+    (re.compile(r"EventScript_Cubone\b|RocketsKilledCubonesMother", re.I), "Cubone house NPC / Cubone cry (mother killed by Rockets)."),
+    (re.compile(r"MrFuji|PokeFlute|AlreadyHavePokeFlute|NoRoomForPokeFlute", re.I), "Mr. Fuji / Poké Flute gift (Volunteer House after Tower rescue)."),
+    (re.compile(r"MarowakGhost|DefeatedMarowakGhost|StartMarowakBattle", re.I), "Pokémon Tower Marowak ghost battle (Silph Scope)."),
+    (re.compile(r"PurifiedZone|ExitPurifiedZone", re.I), "Pokémon Tower 5F purified zone (heals party)."),
+    (re.compile(r"Channeler", re.I), "Pokémon Tower channeler NPC / trainer."),
+    (re.compile(r"SilphScopeNotice|PokemonTowerSign|VolunteerHouseSign|VolunteerPokemonHouse", re.I), "Lavender Silph Scope notice / Tower / Volunteer House sign."),
+    (re.compile(r"EventScript_Snorlax\b|TriedToUsePokeFlute|DontUsePokeFlute|FoughtSnorlax|SnorlaxNoPokeFlute|TryRemoveSnorlax", re.I), "Route 12 Snorlax encounter (Poké Flute wake)."),
+    (re.compile(r"SoftboiledTutor", re.I), "Celadon Softboiled move tutor."),
+    (re.compile(r"Poliwrath", re.I), "Celadon Poliwrath NPC (flavor)."),
+    (re.compile(r"DeptStoreSign|GameCornerSign|MansionSign|PrizeExchangeSign", re.I), "Celadon landmark sign."),
     # Generic trainers (after specific leaders)
     (re.compile(r"EventScript_(Rick|Doug|Sammy|Anthony|Charlie|Liam|Jason|Cole|Atsushi|Kiyo|Takashi|Samuel|Yuji|Warren)\b", re.I), "Trainer battle script (see body for trainerbattle_*)."),
     (re.compile(r"Rival\b", re.I), "Rival interact dialogue (waits for / reacts to starter choice)."),
@@ -422,9 +435,46 @@ VERMILION_CLUSTER_MAPS = [
     "SSAnne_B1F_Corridor",
 ]
 
-# Union of known additive script-coverage presets (slices 1–3)
+# Slice 4: Lavender (+ indoors / Volunteer House) → Pokémon Tower 1F–7F →
+# Route8 / Route12–13 → E–W Underground Path → Route7 / Celadon approach (fill)
+LAVENDER_CLUSTER_MAPS = [
+    "LavenderTown",
+    "LavenderTown_House1",
+    "LavenderTown_House2",
+    "LavenderTown_Mart",
+    "LavenderTown_PokemonCenter_1F",
+    "LavenderTown_PokemonCenter_2F",
+    "LavenderTown_VolunteerPokemonHouse",
+    "PokemonTower_1F",
+    "PokemonTower_2F",
+    "PokemonTower_3F",
+    "PokemonTower_4F",
+    "PokemonTower_5F",
+    "PokemonTower_6F",
+    "PokemonTower_7F",
+    "Route8",
+    "Route8_WestEntrance",
+    "Route12",
+    "Route12_FishingHouse",
+    "Route12_NorthEntrance_1F",
+    "Route12_NorthEntrance_2F",
+    "Route13",
+    "UndergroundPath_EastEntrance",
+    "UndergroundPath_EastWestTunnel",
+    "UndergroundPath_WestEntrance",
+    "Route7",
+    "Route7_EastEntrance",
+    "CeladonCity",
+    "CeladonCity_PokemonCenter_1F",
+    "CeladonCity_PokemonCenter_2F",
+    "CeladonCity_House1",
+]
+
+# Union of known additive script-coverage presets (slices 1–4)
 SCRIPT_COVERAGE_MAPS = list(
-    dict.fromkeys([*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS, *VERMILION_CLUSTER_MAPS])
+    dict.fromkeys(
+        [*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS, *VERMILION_CLUSTER_MAPS, *LAVENDER_CLUSTER_MAPS]
+    )
 )
 
 
@@ -454,9 +504,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Parse Vermilion→Rock Tunnel→Routes9–11→SS Anne cluster (slice 3)",
     )
     p.add_argument(
+        "--lavender",
+        action="store_true",
+        help="Parse Lavender→Pokémon Tower→Route8/12/13→E-W Underground→Celadon approach (slice 4)",
+    )
+    p.add_argument(
         "--script-coverage",
         action="store_true",
-        help="Parse all known script-coverage presets (slices 1–3 union)",
+        help="Parse all known script-coverage presets (slices 1–4 union)",
     )
     p.add_argument("--all-parsed", action="store_true", help="Parse every map with parsed/<Name>.json")
     p.add_argument("--decomp", type=Path, default=DEFAULT_DECOMP)
@@ -475,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
             maps.extend(CERULEAN_CLUSTER_MAPS)
         if args.vermilion:
             maps.extend(VERMILION_CLUSTER_MAPS)
+        if args.lavender:
+            maps.extend(LAVENDER_CLUSTER_MAPS)
     if args.all_parsed:
         maps.extend(
             sorted(
@@ -493,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
             seen.add(m)
             ordered.append(m)
     if not ordered:
-        p.error("provide map names and/or --corridor / --cerulean / --vermilion / --script-coverage / --all-parsed")
+        p.error("provide map names and/or --corridor / --cerulean / --vermilion / --lavender / --script-coverage / --all-parsed")
 
     fails = 0
     for m in ordered:
