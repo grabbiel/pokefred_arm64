@@ -14,7 +14,7 @@ make test
 
 `make test` builds the CLI and runs the tests, including the tanoby ruins golden. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
 
-GitHub Actions workflow `pixel_pipeline`, job `linux-x86_64`, runs on `ubuntu-latest` (Linux x86_64):
+GitHub Actions workflow `.github/workflows/shuverse-editor.yml`, job `pixel-pipeline`, runs on `ubuntu-latest` (Linux x86_64):
 
 ```bash
 cd tools/pixel_pipeline
@@ -70,7 +70,7 @@ Pipeline buffers (`rgba`, indices, 4bpp output, the RGB staging buffer) are **12
 
 AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including the golden. The golden files were produced independently of either C path.
 
-The `linux-x86_64` GitHub Actions job does not run this comparison. NEON stays compiled out there.
+The `pixel-pipeline` job in `.github/workflows/shuverse-editor.yml` does not run this comparison. On `ubuntu-latest` NEON stays compiled out.
 
 ```bash
 cd tools/pixel_pipeline
@@ -84,7 +84,7 @@ make clean
 make test EXTRA_CFLAGS=-DPP_FORCE_SCALAR=1
 ```
 
-Without Apple hardware, the same bit-exact check is an AArch64 cross build run under `qemu-aarch64`. That qemu run is not part of the Linux x86_64 job.
+Without Apple hardware, the same bit-exact check is an AArch64 cross build run under `qemu-aarch64`. That qemu run is not part of the `pixel-pipeline` job.
 
 ## Fixture
 

@@ -16,3 +16,12 @@ jobs:
         run: python3 ShuverseEditor/Scripts/compile_map_shaders.py
       - name: Build arm64 Metal editor
         run: swift build --package-path ShuverseEditor --arch arm64 --product ShuverseEditor
+
+  pixel-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C toolchain
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+      - name: Scalar make test
+        run: cd tools/pixel_pipeline && make && make test
