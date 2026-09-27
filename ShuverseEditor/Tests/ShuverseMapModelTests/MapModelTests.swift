@@ -40,10 +40,11 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(MemoryLayout.offset(of: \MapCanopyInstance.depth), MapGPULayout.canopyDepthOffset)
 
         XCTAssertGreaterThan(MapDepth.clear, MapDepth.ground)
-        XCTAssertGreaterThan(MapDepth.ground, MapDepth.sprite)
-        XCTAssertGreaterThan(MapDepth.sprite, MapDepth.canopy)
+        XCTAssertGreaterThan(MapDepth.ground, MapDepth.canopy)
         XCTAssertGreaterThan(MapDepth.canopy, MapDepth.marker)
-        XCTAssertGreaterThan(MapDepth.marker, MapDepth.selection)
+        XCTAssertGreaterThan(MapDepth.marker, MapDepth.sprite)
+        XCTAssertGreaterThan(MapDepth.sprite, MapDepth.selection)
+        XCTAssertEqual(MapDepth.sprite, 0.20, accuracy: 0.0001)
     }
 
     func testPalletTownIs24By20() throws {
@@ -117,6 +118,25 @@ final class MapModelTests: XCTestCase {
         XCTAssertEqual(decoded.decompRoot, "/tmp/pokefirered")
         XCTAssertEqual(decoded.activeMap?.cells, document.activeMap?.cells)
         XCTAssertEqual(decoded.sharedTilesets, document.sharedTilesets)
+        XCTAssertNil(decoded.brushMetatileId)
+    }
+
+    func testBrushSelectStoresMetatileWithoutPainting() throws {
+        var document = EditorDocument(decompRoot: "/tmp/pokefirered")
+        try document.importParserMap(Data(contentsOf: palletTownURL()))
+        let cells = document.activeMap?.cells
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertFalse(document.selectBrush(metatileId: -1))
+        XCTAssertFalse(document.selectBrush(metatileId: GBATileset.metatileCount))
+        XCTAssertNil(document.brushMetatileId)
+        XCTAssertTrue(document.selectBrush(metatileId: 678))
+        XCTAssertEqual(document.brushMetatileId, 678)
+        XCTAssertEqual(document.activeMap?.cells, cells)
+        XCTAssertTrue(document.dirtyMaps.isEmpty)
+
+        let decoded = try JSONDecoder().decode(EditorDocument.self, from: JSONEncoder().encode(document))
+        XCTAssertEqual(decoded.brushMetatileId, 678)
+        XCTAssertEqual(decoded.activeMap?.cells, cells)
     }
 
     func testRejectsInconsistentBlockdata() {
@@ -215,10 +235,14 @@ final class MapModelTests: XCTestCase {
         )
         XCTAssertFalse(canopyCapacity.prepare(byteCount: canopy.count * MapGPULayout.canopyInstanceBytes))
 
-        let sprites = MapDrawListBuilder.depthSprites(on: map)
+        let sprites = MapDrawListBuilder.sprites(on: map)
         XCTAssertEqual(sprites.count, 2)
         XCTAssertTrue(sprites.allSatisfy { $0.depth == MapDepth.sprite })
-        XCTAssertLessThan(MapDepth.canopy, MapDepth.sprite)
+        XCTAssertLessThan(MapDepth.sprite, MapDepth.canopy)
+        var spriteCapacity = RingCapacity(
+            bytes: MapGPULayout.initialSpriteInstances * MapGPULayout.quadInstanceBytes
+        )
+        XCTAssertFalse(spriteCapacity.prepare(byteCount: sprites.count * MapGPULayout.quadInstanceBytes))
         let overlapsCanopy = sprites.filter { sprite in
             canopy.contains { instance in
                 let index = Int(instance.cellIndex)
@@ -226,14 +250,20 @@ final class MapModelTests: XCTestCase {
             }
         }
         XCTAssertEqual(overlapsCanopy.count, 1)
-        let open = try XCTUnwrap(sprites.first { sprite in !overlapsCanopy.contains(sprite) })
+        let player = try XCTUnwrap(sprites.first { sprite in !overlapsCanopy.contains(sprite) })
         XCTAssertFalse(canopy.contains { instance in
             let index = Int(instance.cellIndex)
-            return spriteOverlaps(open, cellX: index % map.size.width, cellY: index / map.size.width)
+            return spriteOverlaps(player, cellX: index % map.size.width, cellY: index / map.size.width)
         })
-        let covered = try XCTUnwrap(overlapsCanopy.first)
-        XCTAssertGreaterThan(covered.centerY - covered.halfY, Float(19))
-        XCTAssertLessThan(covered.centerY + covered.halfY, Float(20))
+        XCTAssertEqual(player.red, 0.90, accuracy: 0.0001)
+        XCTAssertEqual(player.green, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(player.centerX, 8.5, accuracy: 0.0001)
+        XCTAssertEqual(player.centerY, 15.55, accuracy: 0.0001)
+        let npc = try XCTUnwrap(overlapsCanopy.first)
+        XCTAssertEqual(npc.blue, 0.86, accuracy: 0.0001)
+        XCTAssertGreaterThan(npc.centerY - npc.halfY, Float(19))
+        XCTAssertLessThan(npc.centerY + npc.halfY, Float(20))
+        XCTAssertLessThan(npc.centerY - npc.halfY, Float(19.5))
     }
 
     func testCanopyIdsAreGeneralTilesetNotPalletLayout() {
@@ -259,10 +289,10 @@ final class MapModelTests: XCTestCase {
         let canopy = MapDrawListBuilder.canopy(on: empty)
         XCTAssertEqual(canopy.map(\.cellIndex), [UInt32(0)])
         XCTAssertEqual(canopy[0].depth, MapDepth.canopy)
-        XCTAssertTrue(MapDrawListBuilder.depthSprites(on: empty).isEmpty)
+        XCTAssertTrue(MapDrawListBuilder.sprites(on: empty).isEmpty)
 
-        // Same cells the Pallet sample uses for its red stubs. A different map
-        // still gets canopy from the general-tileset ids, and no depth sprites.
+        // Same cells the Pallet sample uses for its object sprites. A different map
+        // still gets canopy from the general-tileset ids, and no object sprites.
         let width = 9
         let height = 20
         var cells = Array(repeating: MapCell(metatileId: 1, mapAttribute: 0), count: width * height)
@@ -279,7 +309,7 @@ final class MapModelTests: XCTestCase {
             cells: cells
         )
         XCTAssertEqual(MapDrawListBuilder.canopy(on: route).map(\.cellIndex), [UInt32(19 * width + 2)])
-        XCTAssertTrue(MapDrawListBuilder.depthSprites(on: route).isEmpty)
+        XCTAssertTrue(MapDrawListBuilder.sprites(on: route).isEmpty)
     }
 
     func testStackedMarkersAndTileOverlayMath() {
@@ -431,19 +461,21 @@ final class MapModelTests: XCTestCase {
         XCTAssertTrue(gpu.contains("IndexAtlasRows.copy"))
         XCTAssertTrue(gpu.contains("map-canopy"))
         XCTAssertTrue(gpu.contains("label: \"canopy\""))
-        XCTAssertTrue(gpu.contains("label: \"depth-sprites\""))
+        XCTAssertTrue(gpu.contains("label: \"sprites\""))
+        XCTAssertFalse(gpu.contains("depth-sprites"))
         let canopyDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(canopyPipeline)"))
         let groundDraw = try XCTUnwrap(gpu.range(of: "setRenderPipelineState(tilePipeline)"))
         XCTAssertLessThan(canopyDraw.lowerBound, groundDraw.lowerBound)
         let spriteDraws = ranges(of: "setRenderPipelineState(spritePipeline)", in: gpu)
         XCTAssertEqual(spriteDraws.count, 2)
-        XCTAssertLessThan(spriteDraws[0].lowerBound, groundDraw.lowerBound)
+        XCTAssertLessThan(spriteDraws[0].lowerBound, canopyDraw.lowerBound)
         XCTAssertGreaterThan(spriteDraws[1].lowerBound, groundDraw.lowerBound)
         XCTAssertTrue(gpu.contains("animDirty"))
         XCTAssertTrue(canvas.contains("isPaused = true"))
         XCTAssertTrue(canvas.contains("PalletTownTilesetAnim"))
         XCTAssertTrue(canvas.contains("rewriteIndexRows"))
         XCTAssertTrue(canvas.contains("water frame"))
+        XCTAssertTrue(canvas.contains("sprites "))
         let overlay = try String(contentsOf: root.appendingPathComponent("App/ImGuiOverlayView.swift"), encoding: .utf8)
         XCTAssertTrue(overlay.contains("isPaused = false"))
         XCTAssertTrue(overlay.contains("ImGuiDockShell.build"))

@@ -45,9 +45,11 @@ The map view stays paused (`isPaused`, `enableSetNeedsDisplay`). A 60 Hz timer s
 
 ## Canopy depth stub
 
-Ground metatiles are unchanged: one instanced draw, both GBA layers, depth 0.70. `GeneralTilesetTreeTops` holds the six pret general-tileset tree-top ids (`METATILE_General_ThinTreeTop_*` and `METATILE_General_WideTreeTop_*`, ids 10, 11, 12, 14, 15, 19) as a set. The canopy list matches those ids on any map; they are not Pallet Town cell coordinates. On the Pallet sample that is the eight south-edge cells using ids 14 and 15. Each instance is an 8-byte `MapCanopyInstance` (cell index plus depth) in a triple `MTLStorageModeShared` ring. `map_canopy_vertex` is `[[stage_in]]` and reads the same grid and index atlas. `map_canopy_fragment` samples only the top 2×2 and `discard_fragment()`s index 0, so holes do not write depth.
+Ground metatiles are unchanged: one instanced draw, both GBA layers, depth 0.70. `GeneralTilesetTreeTops` holds the six pret general-tileset tree-top ids (`METATILE_General_ThinTreeTop_*` and `METATILE_General_WideTreeTop_*`, ids 10, 11, 12, 14, 15, 19) as a set. The canopy list matches those ids on any map; they are not Pallet Town cell coordinates. On the Pallet sample that is the eight south-edge cells using ids 14 and 15. Each instance is an 8-byte `MapCanopyInstance` (cell index plus depth) in a triple `MTLStorageModeShared` ring. `map_canopy_vertex` is `[[stage_in]]` and reads the same grid and index atlas. `map_canopy_fragment` samples only the top 2×2 and `discard_fragment()`s index 0, so holes do not write depth. Canopy depth stays 0.40.
 
-The pass submits canopy, then a sprite stub, then ground, then markers and selection. Canopy depth is 0.40 and the stub is 0.55, so less-than depth keeps the leaves in front of the later ground quads. The stub is two red quads and only when `mapId` is `MAP_PALLET_TOWN`: one in the leafy corner of the south-west wide tree top (most of the quad is under the leaves; the upper left stays on the grass) and one on open ground at cell (8, 15), fully in front of that metatile. Those anchors are Pallet sample proof geometry, not coordinates for other maps. Markers stay at 0.28, in front of the leaves. Water animation still rewrites the same shared index rows and is not part of this layer. The status line shows `canopy N`.
+## Object sprites
+
+The pass submits object sprites, then canopy, then ground, then markers and selection. Object sprites are a separate triple `MTLStorageModeShared` ring of `MapQuadInstance` quads (`label: "sprites"`), drawn with the same `map_sprite_vertex` `[[stage_in]]` path and the same less-than depth-stencil. Their depth is 0.20, so they cover the leaves and the later ground quads. The list is two stand-ins and only when `mapId` is `MAP_PALLET_TOWN`: a blue NPC on the south-west wide tree top (the quad overlaps the leaf half of that cell) and a red player on open ground at cell (8, 15), in front of that metatile. Those anchors are Pallet sample proof geometry, not coordinates for other maps. Markers stay at 0.28, in front of the leaves and behind the sprites. Water animation still rewrites the same shared index rows and is not part of this layer. The status line shows `canopy N` and `sprites N`.
 
 This is not a metatile layer-type table. Roofs, the north tree wall, and other top-layer pixels stay in the ground composite.
 
@@ -65,16 +67,16 @@ The pass uses `MTLPixelFormat.depth32Float` and a less-than depth-stencil state 
 |---|---|---|
 | clear | 1.00 | cleared each pass |
 | ground | 0.70 | metatile quads, both GBA layers |
-| sprite | 0.55 | Pallet Town object stub |
-| canopy | 0.40 | tree-top leaves, in front of the stub |
-| marker | 0.28 | event quads |
+| canopy | 0.40 | tree-top leaves, in front of ground |
+| marker | 0.28 | event quads, in front of the leaves |
+| sprite | 0.20 | Pallet Town object sprites, in front of canopy |
 | selection | 0.15 | outline quads |
 
-Canopy is submitted before ground. The depth test is what keeps those leaves, and the sprite stub, in front of the ground quads. Depth `storeAction` is `.dontCare`: nothing samples depth after the pass, so TBDR does not write it back to memory. Color is stored for present.
+Sprites and canopy are submitted before ground. The depth test is what keeps the sprites in front of the leaves, and both in front of the ground quads. Depth `storeAction` is `.dontCare`: nothing samples depth after the pass, so TBDR does not write it back to memory. Color is stored for present.
 
 ## TBDR overlays
 
-Canopy, the sprite stub, tiles, markers, and the selection outline are batched in a single encoder. That keeps the color attachment on-chip until the pass ends. Selection is the depth-tested quads only.
+Object sprites, canopy, tiles, markers, and the selection outline are batched in a single encoder. That keeps the color attachment on-chip until the pass ends. Selection is the depth-tested quads only.
 
 `map_tile_overlay` in `MapShaders.swift` is the future imageblock kernel: it would tint cells whose map attribute is non-zero (`MapOverlayFlags.collisionTint`, scale `MapTileOverlay.collisionTintScale`) and stamp a gold selection border (`MapOverlayFlags.selectionOutline`). World position matches `MapTileOverlay.world`. macOS builds do not create a tile render pipeline and do not dispatch that kernel. `tileFunction` / `tileWidth` on `MTLRenderPipeline*` are not the macOS path, so the app does not call them. `overlayFlags` stays in the uniform struct for that future kernel and defaults to 0. Turning on `selectionOutline` does not draw a second border.
 
