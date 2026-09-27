@@ -104,7 +104,8 @@ static int check_origin(void)
     static const char origin_expect[] =
         "# pret/pokefirered fixtures. One record per line: <basename> <source path>\n"
         "tanoby_ruins_tiles.png data/tilesets/secondary/tanoby_ruins/tiles.png\n"
-        "game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png\n";
+        "game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png\n"
+        "pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png\n";
     uint8_t *origin = NULL;
     size_t origin_n = 0;
 
@@ -254,6 +255,22 @@ static int check_game_corner_details(void)
     return 0;
 }
 
+static int check_pallet_town_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+
+    REQUIRE(pp_png_decode_file("testdata/pallet_town_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
 int main(void)
 {
     REQUIRE(check_origin() == 0);
@@ -265,6 +282,10 @@ int main(void)
     REQUIRE(check_fixture("game_corner", "testdata/game_corner_tiles.png", "tests/golden/game_corner_tiles.4bpp",
                           "tests/golden/game_corner_tiles.pal", "build/game_corner_tiles.4bpp",
                           "build/game_corner_tiles.pal", 128, 88, 5632u) == 0);
+    REQUIRE(check_pallet_town_details() == 0);
+    REQUIRE(check_fixture("pallet_town", "testdata/pallet_town_tiles.png", "tests/golden/pallet_town_tiles.4bpp",
+                          "tests/golden/pallet_town_tiles.pal", "build/pallet_town_tiles.4bpp",
+                          "build/pallet_town_tiles.pal", 128, 40, 2560u) == 0);
 
     EXPECT(pp_convert_png_to_gba(NULL, "build/x.4bpp", "build/x.pal", NULL) == 1);
     EXPECT(pp_convert_png_to_gba("testdata/missing.png", "build/x.4bpp", "build/x.pal", NULL) == 1);
