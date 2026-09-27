@@ -12,7 +12,17 @@ make
 make test
 ```
 
-`make test` builds the CLI and runs the scalar tests, including the tanoby ruins golden. Objects stay in `build/` (gitignored).
+`make test` builds the CLI and runs the tests, including the tanoby ruins golden. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
+
+GitHub Actions workflow `pixel_pipeline`, job `linux-x86_64`, runs on `ubuntu-latest` (Linux x86_64):
+
+```bash
+cd tools/pixel_pipeline
+make
+make test
+```
+
+That job is scalar only. It does not run the NEON converters.
 
 ```bash
 ./build/pixel_pipeline testdata/tanoby_ruins_tiles.png build/tiles.4bpp build/tiles.pal
@@ -56,9 +66,11 @@ Index 0 is the transparent slot.
 
 Pipeline buffers (`rgba`, indices, 4bpp output, the RGB staging buffer) are **128-byte aligned** via `posix_memalign`, including on x86_64. Tests check the pointer alignment.
 
-## NEON on Apple Silicon
+## NEON (Apple Silicon / AArch64)
 
-AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit, which is what `make test` checks on that machine (the golden files were produced independently of either C path).
+AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including the golden. The golden files were produced independently of either C path.
+
+The `linux-x86_64` GitHub Actions job does not run this comparison. NEON stays compiled out there.
 
 ```bash
 cd tools/pixel_pipeline
@@ -72,7 +84,7 @@ make clean
 make test EXTRA_CFLAGS=-DPP_FORCE_SCALAR=1
 ```
 
-Linux CI and this x86_64 VM do not define `__ARM_NEON`. Those builds compile the NEON files as disabled stubs and run the scalar tests only.
+Without Apple hardware, the same bit-exact check is an AArch64 cross build run under `qemu-aarch64`. That qemu run is not part of the Linux x86_64 job.
 
 ## Fixture
 
