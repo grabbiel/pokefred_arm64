@@ -16,7 +16,8 @@ Stdlib Python tools. Decomp (`pokefirered`) is **read-only**. Outputs land under
 | `--corridor` | Slice 1: Pallet → Viridian → Pewter (30) |
 | `--cerulean` | Slice 2: Route3/4 → Mt. Moon → Cerulean → Route24/25 → Route5/6 + N/S Underground Path (30) |
 | `--vermilion` | Slice 3: Vermilion (+ indoors/Fan Club) → Diglett's Cave → Routes 9–11 → Rock Tunnel / Power Plant → SS Anne key decks (30) |
-| `--script-coverage` | Union of slices 1–3 (90) |
+| `--celadon` | Slice 5: Celadon (+ dept store / Game Corner / Rocket Hideout) → Routes 16–18 Cycling Road + gates (30). Independent of held Lavender slice 4 / PR #21 |
+| `--script-coverage` | Union of slices 1–3 + 5 (120). Lavender #21 held separately |
 
 ```bash
 # Requires parsed/<Map>.json already (or run full pipeline first)
