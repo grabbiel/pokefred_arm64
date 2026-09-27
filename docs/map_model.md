@@ -58,6 +58,10 @@ Opening a connection or warp loads (or focuses) another `MapDocument` into `maps
 3. Follow connection/warp → set `activeMapId` (load if missing)
 4. Undo — per-map patch stack
 
+## GPU upload
+
+The canvas uploads `MapMetatileGrid`: one `UInt32` per cell, low 16 bits `MapCell.raw`. It does not expand each cell into six vertices when the selection changes. Markers and the selection outline are small quad-instance lists. See [metal_gpu.md](metal_gpu.md).
+
 ## Non-goals for v1
 - No live C rewrite yet.
 - Canvas may fake-color by `metatileId` until tileset parse lands.
