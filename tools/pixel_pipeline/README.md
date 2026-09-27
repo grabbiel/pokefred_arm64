@@ -12,7 +12,7 @@ make
 make test
 ```
 
-`make test` builds the CLI, the static library, and the tests, including the tanoby ruins, game corner, pallet town, and mart goldens. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
+`make test` builds the CLI, the static library, and the tests, including the tanoby ruins, game corner, pallet town, mart, and school goldens. On Linux x86_64 this is the scalar path (`__ARM_NEON` is not defined). Objects stay in `build/` (gitignored).
 
 GitHub Actions workflow `.github/workflows/shuverse-editor.yml`, job `pixel-pipeline`, runs on `ubuntu-latest` (Linux x86_64):
 
@@ -29,6 +29,7 @@ That job is scalar only. It does not run the NEON converters.
 ./build/pixel_pipeline testdata/game_corner_tiles.png build/game_corner.4bpp build/game_corner.pal
 ./build/pixel_pipeline testdata/pallet_town_tiles.png build/pallet_town.4bpp build/pallet_town.pal
 ./build/pixel_pipeline testdata/mart_tiles.png build/mart.4bpp build/mart.pal
+./build/pixel_pipeline testdata/school_tiles.png build/school.4bpp build/school.pal
 ```
 
 From the repo root the binary is `tools/pixel_pipeline/build/pixel_pipeline` after `make`. Output paths are chosen by the caller.
@@ -65,7 +66,7 @@ c5 &= 0x1F
 
 Index 0 is the transparent slot.
 
-- Indexed PNG with at most 16 unique PLTE entries and no `tRNS` alpha of 0: palette order is preserved. Index 0 is GBA color 0 (the PNG's first color), even when those pixels are opaque. `testdata/tanoby_ruins_tiles.png` (128×40, 16 grays), `testdata/game_corner_tiles.png` (128×88, 16 colors), `testdata/pallet_town_tiles.png` (128×40, 16 grays), and `testdata/mart_tiles.png` (128×24, 16 grays) are this case. None of these files has `tRNS`.
+- Indexed PNG with at most 16 unique PLTE entries and no `tRNS` alpha of 0: palette order is preserved. Index 0 is GBA color 0 (the PNG's first color), even when those pixels are opaque. `testdata/tanoby_ruins_tiles.png` (128×40, 16 grays), `testdata/game_corner_tiles.png` (128×88, 16 colors), `testdata/pallet_town_tiles.png` (128×40, 16 grays), `testdata/mart_tiles.png` (128×24, 16 grays), and `testdata/school_tiles.png` (128×32, 16 grays) are this case. None of these files has `tRNS`.
 - Indexed PNG with one or more `tRNS` alphas of 0: those pixels become index 0. Slot 0 keeps the first transparent PLTE color. Remaining colors keep PLTE order.
 - Truecolor, or more than 16 colors: alpha 0 is index 0. Opaque colors use slots 1..15 if anything is transparent, or slots 0..15 if nothing is. Extra colors are merged deterministically (see `quantize.h`).
 
@@ -75,7 +76,7 @@ Pipeline buffers (`rgba`, indices, 4bpp output, the RGB staging buffer) are **12
 
 ## NEON (Apple Silicon / AArch64)
 
-AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including all four goldens. The NEON tile packer documents its little-endian lane assumption in `tile_pack.c`. The tanoby golden was produced independently of either C path. The game corner, pallet town, and mart goldens were produced by this scalar pipeline and are checked the same way.
+AArch64 always has NEON. gcc and clang define `__ARM_NEON`, and the same sources then convert the palette with `rgb555_neon` and pack tiles with the NEON packer. Both must match the scalar path bit for bit. `make test` on an AArch64 machine checks that, including all five goldens. The NEON tile packer documents its little-endian lane assumption in `tile_pack.c`. The tanoby golden was produced independently of either C path. The game corner, pallet town, mart, and school goldens were produced by this scalar pipeline and are checked the same way.
 
 The `pixel-pipeline` job in `.github/workflows/shuverse-editor.yml` does not run this comparison. On `ubuntu-latest` NEON stays compiled out.
 
@@ -114,5 +115,6 @@ int pp_convert_png_to_gba(const char *png_path, const char *out_4bpp, const char
 | `testdata/game_corner_tiles.png` | `data/tilesets/secondary/game_corner/tiles.png` (128×88) | `tests/golden/game_corner_tiles.4bpp` (5632 bytes, 16×11 tiles) and `.pal` (32 bytes) |
 | `testdata/pallet_town_tiles.png` | `data/tilesets/secondary/pallet_town/tiles.png` (128×40) | `tests/golden/pallet_town_tiles.4bpp` (2560 bytes, 16×5 tiles) and `.pal` (32 bytes) |
 | `testdata/mart_tiles.png` | `data/tilesets/secondary/mart/tiles.png` (128×24) | `tests/golden/mart_tiles.4bpp` (1536 bytes, 16×3 tiles) and `.pal` (32 bytes) |
+| `testdata/school_tiles.png` | `data/tilesets/secondary/school/tiles.png` (128×32) | `tests/golden/school_tiles.4bpp` (2048 bytes, 16×4 tiles) and `.pal` (32 bytes) |
 
-All four goldens are checked by `make test` on the scalar path. `game_corner`, `pallet_town`, and `mart` are indexed PNGs with 16 PLTE colors and no `tRNS`, so index 0 stays the first palette entry.
+All five goldens are checked by `make test` on the scalar path. `game_corner`, `pallet_town`, `mart`, and `school` are indexed PNGs with 16 PLTE colors and no `tRNS`, so index 0 stays the first palette entry.
