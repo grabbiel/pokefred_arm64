@@ -4,7 +4,7 @@ ARM64 port of Pokémon FireRed, and the native Shuverse Editor Suite.
 
 ## Shuverse Editor
 
-Apple Silicon macOS map editor (Swift, AppKit, Metal). It loads Map Parser JSON into the multi-map in-memory model and draws Pallet Town from GBA 4bpp tiles and RGB555 palettes. The sample map is 24×20.
+Apple Silicon macOS map editor (Swift, AppKit, Metal). It loads Map Parser JSON into the multi-map in-memory model and draws a fake-colored metatile grid. Pallet Town in the sample is 24×20.
 
 There is no GBA C rewrite and no Electron/Rosetta build. The editor refuses to compile for any architecture other than `arm64`.
 
