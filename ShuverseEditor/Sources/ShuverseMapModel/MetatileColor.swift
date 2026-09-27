@@ -2,6 +2,22 @@ import Foundation
 
 /// Stable fake color for a metatile id. Tileset pixels replace this later.
 public enum MetatileColor {
+    /// 1024 RGBA tuples, indexed by metatile id. The canvas uploads this once
+    /// into a shared buffer; the tile shader samples it instead of baking
+    /// colors into per-cell vertices.
+    public static func paletteComponents(count: Int = 1024) -> [Float] {
+        var components: [Float] = []
+        components.reserveCapacity(count * 4)
+        for id in 0..<count {
+            let color = self.components(for: UInt16(id & 0xFFFF))
+            components.append(color.r)
+            components.append(color.g)
+            components.append(color.b)
+            components.append(color.a)
+        }
+        return components
+    }
+
     public static func components(for metatileId: UInt16) -> (r: Float, g: Float, b: Float, a: Float) {
         let hue = (Float(metatileId) * 0.6180339887).truncatingRemainder(dividingBy: 1)
         let band = Float((Int(metatileId) / 17) % 3)

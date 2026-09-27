@@ -12,5 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test map model
         run: swift test --package-path ShuverseEditor
+      - name: Compile Metal shaders
+        run: python3 ShuverseEditor/Scripts/compile_map_shaders.py
       - name: Build arm64 Metal editor
         run: swift build --package-path ShuverseEditor --arch arm64 --product ShuverseEditor

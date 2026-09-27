@@ -59,6 +59,8 @@ File → Open Map JSON…, File → Open Pallet Town Sample, or drop a `.json` f
 
 ## Canvas
 
+GPU notes (shared grid, triple-buffering, depth, tile-shader overlays): [docs/metal_gpu.md](../docs/metal_gpu.md).
+
 - Drag to pan. A short click inspects the metatile under the cursor.
 - Scroll wheel, pinch, or ⌘-scroll to zoom toward the pointer. Menu or `+` / `-` zoom about the center. `0` or `f` fits the map. Arrow keys pan.
 - The inspector shows metatile id, map attribute, packed `u16`, and any object, warp, trigger, or sign on that cell.
