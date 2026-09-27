@@ -1,0 +1,16 @@
+name: Shuverse Editor
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  arm64-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test map model
+        run: swift test --package-path ShuverseEditor
+      - name: Build arm64 Metal editor
+        run: swift build --package-path ShuverseEditor --arch arm64 --product ShuverseEditor
