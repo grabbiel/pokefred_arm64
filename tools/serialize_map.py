@@ -9,11 +9,15 @@ from Map Parser JSON. DEFAULT is --dry-run: never writes into the decomp unless
 and map.json via atomic rename. If a later file fails, files already replaced
 in that map's write set are restored from those originals and the process
 exits non-zero naming the failed step.
+
+Validation is fail-closed: bad or missing fields raise before any replace.
+A valid dry-run still rebuilds and compares and does not write.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import os
@@ -272,29 +276,109 @@ def dump_map_json(obj: dict) -> bytes:
     return (json.dumps(obj, indent=2) + "\n").encode("utf-8")
 
 
+def plan_map_json(doc: dict, existing: dict | None) -> bytes:
+    """map.json bytes that dry-run compares and ``--write`` stores.
+
+    Both modes call this so the merge plan and the bytes written cannot drift.
+    Does not validate; ``serialize_one`` refuses bad documents before planning.
+    """
+    return dump_map_json(build_map_json(doc, existing))
+
+
+def _require_int(value: object, label: str) -> int:
+    """Reject bool (a subclass of int), floats, and numeric strings."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SerializeError(
+            f"{label}: expected int, got {type(value).__name__}"
+        )
+    return value
+
+
+def _event_dicts(doc: dict, key: str) -> list[dict]:
+    """Return event objects for ``key``.
+
+    A missing key is an empty list. ``connections: null`` is the pret indoor
+    form and is also empty for checks. Any other null, a non-list, or a
+    non-object entry is refused so ``--write`` cannot wipe or coerce it.
+    """
+    if key not in doc or doc[key] is None:
+        if key != "connections" and key in doc and doc[key] is None:
+            raise SerializeError(f"{key} must be a list")
+        return []
+    value = doc[key]
+    if not isinstance(value, list):
+        raise SerializeError(f"{key} must be a list")
+    out: list[dict] = []
+    for i, ev in enumerate(value):
+        if not isinstance(ev, dict):
+            raise SerializeError(f"{key}[{i}] must be an object")
+        out.append(ev)
+    return out
+
+
+def _dest_warp_id_ok(value: object) -> bool:
+    """pret stores dest_warp_id as a string ("0"); int is accepted, bool is not."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        return value != ""
+    return False
+
+
 def validate_document(doc: dict) -> tuple[int, int, list[int], list[int]]:
-    """Fail-closed validation. Returns (width, height, metatile_ids, map_attributes)."""
+    """Fail-closed validation. Returns (width, height, metatile_ids, map_attributes).
+
+    Bad or missing fields raise ``SerializeError`` before any file is replaced.
+    """
     required = ("name", "layout_id", "dimensions", "blockdata")
     for key in required:
         if key not in doc:
             raise SerializeError(f"document missing required key '{key}'")
 
+    for key in ("name", "layout_id"):
+        value = doc[key]
+        if not isinstance(value, str) or not value:
+            raise SerializeError(f"document '{key}' must be a non-empty string")
+
     dims = doc["dimensions"]
+    if not isinstance(dims, dict):
+        raise SerializeError(
+            f"invalid dimensions: expected object, got {type(dims).__name__}"
+        )
     try:
-        width = int(dims["width_metatiles"])
-        height = int(dims["height_metatiles"])
-    except (KeyError, TypeError, ValueError) as e:
+        width_raw = dims["width_metatiles"]
+        height_raw = dims["height_metatiles"]
+    except KeyError as e:
         raise SerializeError(f"invalid dimensions: {e}") from e
+    width = _require_int(width_raw, "dimensions.width_metatiles")
+    height = _require_int(height_raw, "dimensions.height_metatiles")
 
     if width <= 0 or height <= 0:
         raise SerializeError(f"dimensions must be positive, got {width}x{height}")
 
     bd = doc["blockdata"]
+    if not isinstance(bd, dict):
+        raise SerializeError(
+            f"invalid blockdata arrays: expected object, got {type(bd).__name__}"
+        )
     try:
-        metatile_ids = [int(x) for x in bd["metatile_ids"]]
-        map_attributes = [int(x) for x in bd["map_attributes"]]
-    except (KeyError, TypeError, ValueError) as e:
+        ids_raw = bd["metatile_ids"]
+        attrs_raw = bd["map_attributes"]
+    except KeyError as e:
         raise SerializeError(f"invalid blockdata arrays: {e}") from e
+    if not isinstance(ids_raw, list) or not isinstance(attrs_raw, list):
+        raise SerializeError(
+            "invalid blockdata arrays: metatile_ids and map_attributes must be lists"
+        )
+    metatile_ids = [
+        _require_int(x, f"blockdata.metatile_ids[{i}]") for i, x in enumerate(ids_raw)
+    ]
+    map_attributes = [
+        _require_int(x, f"blockdata.map_attributes[{i}]")
+        for i, x in enumerate(attrs_raw)
+    ]
 
     expected = width * height
     if len(metatile_ids) != expected:
@@ -307,34 +391,52 @@ def validate_document(doc: dict) -> tuple[int, int, list[int], list[int]]:
             f"map_attributes count {len(map_attributes)} != "
             f"width*height {expected} ({width}x{height})"
         )
+    for mid in metatile_ids:
+        if not (0 <= mid <= METATILE_ID_MAX):
+            raise SerializeError(
+                f"metatileId {mid} out of range 0..{METATILE_ID_MAX}"
+            )
+    for attr in map_attributes:
+        if not (0 <= attr <= MAP_ATTR_MAX):
+            raise SerializeError(
+                f"mapAttribute {attr} out of range 0..{MAP_ATTR_MAX}"
+            )
 
     # Event bounds + warp / connection checks (fail closed)
-    for i, ev in enumerate(doc.get("object_events") or []):
+    for i, ev in enumerate(_event_dicts(doc, "object_events")):
         # pret border clones may place x/y outside layout bounds
-        allow_oob = isinstance(ev, dict) and ev.get("type") == "clone"
+        allow_oob = ev.get("type") == "clone"
         _check_xy(ev, f"object_events[{i}]", width, height, allow_oob=allow_oob)
-    for i, ev in enumerate(doc.get("warp_events") or []):
+    for i, ev in enumerate(_event_dicts(doc, "warp_events")):
         _check_xy(ev, f"warp_events[{i}]", width, height)
-        if "dest_map" not in ev or not isinstance(ev["dest_map"], str):
-            raise SerializeError(f"warp_events[{i}]: dest_map must be a string")
-        if "dest_warp_id" not in ev:
-            raise SerializeError(f"warp_events[{i}]: dest_warp_id required")
-        # dest_warp_id is a string in pret map.json (e.g. "0")
-        if not isinstance(ev["dest_warp_id"], (str, int)):
-            raise SerializeError(f"warp_events[{i}]: dest_warp_id must be str or int")
-    for i, ev in enumerate(doc.get("coord_events") or []):
+        dest_map = ev.get("dest_map")
+        if not isinstance(dest_map, str) or not dest_map:
+            raise SerializeError(
+                f"warp_events[{i}]: dest_map must be a non-empty string"
+            )
+        if "dest_warp_id" not in ev or not _dest_warp_id_ok(ev.get("dest_warp_id")):
+            raise SerializeError(
+                f"warp_events[{i}]: dest_warp_id must be a non-empty string or int"
+            )
+    for i, ev in enumerate(_event_dicts(doc, "coord_events")):
         _check_xy(ev, f"coord_events[{i}]", width, height)
-    for i, ev in enumerate(doc.get("bg_events") or []):
+    for i, ev in enumerate(_event_dicts(doc, "bg_events")):
         _check_xy(ev, f"bg_events[{i}]", width, height)
-    for i, conn in enumerate(doc.get("connections") or []):
+    for i, conn in enumerate(_event_dicts(doc, "connections")):
         direction = conn.get("direction")
         if direction not in VALID_DIRECTIONS:
             raise SerializeError(
                 f"connections[{i}]: direction must be one of "
                 f"{sorted(VALID_DIRECTIONS)}, got {direction!r}"
             )
-        if "offset" not in conn or not isinstance(conn["offset"], int):
+        if "offset" not in conn:
             raise SerializeError(f"connections[{i}]: offset must be an int")
+        _require_int(conn["offset"], f"connections[{i}].offset")
+        map_name = conn.get("map")
+        if not isinstance(map_name, str) or not map_name:
+            raise SerializeError(
+                f"connections[{i}]: map must be a non-empty string"
+            )
 
     return width, height, metatile_ids, map_attributes
 
@@ -342,11 +444,10 @@ def validate_document(doc: dict) -> tuple[int, int, list[int], list[int]]:
 def _check_xy(
     ev: dict, label: str, width: int, height: int, *, allow_oob: bool = False
 ) -> None:
-    try:
-        x = int(ev["x"])
-        y = int(ev["y"])
-    except (KeyError, TypeError, ValueError) as e:
-        raise SerializeError(f"{label}: missing/invalid x,y ({e})") from e
+    if "x" not in ev or "y" not in ev:
+        raise SerializeError(f"{label}: missing/invalid x,y")
+    x = _require_int(ev["x"], f"{label}.x")
+    y = _require_int(ev["y"], f"{label}.y")
     if allow_oob:
         return
     if not (0 <= x < width and 0 <= y < height):
@@ -619,8 +720,8 @@ def serialize_one(
     existing_map_json: dict | None = None
     if map_json_path.is_file():
         existing_map_json = json.loads(map_json_path.read_text(encoding="utf-8"))
-    rebuilt_map_json = build_map_json(doc, existing_map_json)
-    map_json_bytes = dump_map_json(rebuilt_map_json)
+    # Same bytes dry-run compares and --write stores. Validation already ran.
+    map_json_bytes = plan_map_json(doc, existing_map_json)
 
     print(f"map: {doc['name']} ({doc.get('map_id', '?')})")
     print(f"  layout: {doc['layout_id']}")
@@ -791,8 +892,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Pack/unpack synthetic blockdata, prove dry-run and --write agree "
-            "on border.bin edge cases, and drill cross-file rollback. "
-            "No decomp checkout required."
+            "on border.bin edge cases, prove map.json merge parity for Pallet "
+            "Town and Oak's Lab, refuse bad or missing fields, and drill "
+            "cross-file rollback. No decomp checkout required."
         ),
     )
     return p
@@ -1100,11 +1202,565 @@ def _self_check_border_parity(check: Callable[..., None]) -> None:
     )
 
 
-def run_self_check() -> int:
-    """Decomp-free pack/unpack, border.bin dry-run/--write parity, and rollback.
+def _parser_slim_doc(map_json: dict, width: int, height: int) -> dict:
+    """Map Parser-shaped document: drop fields pret keeps and the parser omits.
 
-    This does not replace the PalletTown / OaksLab byte-identity ``--write``
-    gate, which needs a local pokefirered checkout.
+    Mirrors ``parse_map`` slimming (no border, no ``movement_range_*`` /
+    ``trainer_*`` / header keys the parser does not copy). ``connections:
+    null`` becomes ``[]``, which ``build_map_json`` must turn back into null.
+    """
+
+    def slim_object(ev: dict) -> dict:
+        if ev.get("type") == "clone":
+            out = {
+                "type": "clone",
+                "graphics_id": ev["graphics_id"],
+                "x": ev["x"],
+                "y": ev["y"],
+                "target_local_id": ev["target_local_id"],
+                "target_map": ev["target_map"],
+            }
+            if "local_id" in ev:
+                return {"local_id": ev["local_id"], **out}
+            return out
+        out = {
+            "graphics_id": ev["graphics_id"],
+            "x": ev["x"],
+            "y": ev["y"],
+            "elevation": ev["elevation"],
+            "movement_type": ev["movement_type"],
+            "script": ev["script"],
+            "flag": ev["flag"],
+        }
+        if "local_id" in ev:
+            return {"local_id": ev["local_id"], **out}
+        return out
+
+    def slim_coord(ev: dict) -> dict:
+        out = {
+            "type": ev["type"],
+            "x": ev["x"],
+            "y": ev["y"],
+            "elevation": ev["elevation"],
+        }
+        for key in ("var", "var_value", "script", "weather"):
+            if key in ev:
+                out[key] = ev[key]
+        return out
+
+    def slim_bg(ev: dict) -> dict:
+        out = {
+            "type": ev["type"],
+            "x": ev["x"],
+            "y": ev["y"],
+            "elevation": ev["elevation"],
+        }
+        for key in ("player_facing_dir", "script", "item", "flag", "hidden_item_id"):
+            if key in ev:
+                out[key] = ev[key]
+        return out
+
+    connections = map_json.get("connections") or []
+    n = width * height
+    return {
+        "map_id": map_json["id"],
+        "name": map_json["name"],
+        "layout_id": map_json["layout"],
+        "dimensions": {
+            "width_metatiles": width,
+            "height_metatiles": height,
+        },
+        "music": map_json.get("music"),
+        "weather": map_json.get("weather"),
+        "map_type": map_json.get("map_type"),
+        "connections": [
+            {"map": c["map"], "offset": c["offset"], "direction": c["direction"]}
+            for c in connections
+        ],
+        "object_events": [slim_object(e) for e in (map_json.get("object_events") or [])],
+        "warp_events": [
+            {
+                "x": e["x"],
+                "y": e["y"],
+                "elevation": e["elevation"],
+                "dest_map": e["dest_map"],
+                "dest_warp_id": e["dest_warp_id"],
+            }
+            for e in (map_json.get("warp_events") or [])
+        ],
+        "coord_events": [slim_coord(e) for e in (map_json.get("coord_events") or [])],
+        "bg_events": [slim_bg(e) for e in (map_json.get("bg_events") or [])],
+        "blockdata": {
+            "metatile_ids": [1] * n,
+            "map_attributes": [0] * n,
+        },
+    }
+
+
+def _pallet_town_map_json() -> dict:
+    """Pret-shaped Pallet Town header/events (parser-dropped keys included)."""
+    return {
+        "id": "MAP_PALLET_TOWN",
+        "name": "PalletTown",
+        "layout": "LAYOUT_PALLET_TOWN",
+        "music": "MUS_PALLET",
+        "region_map_section": "MAPSEC_PALLET_TOWN",
+        "requires_flash": False,
+        "weather": "WEATHER_SUNNY",
+        "map_type": "MAP_TYPE_TOWN",
+        "allow_cycling": True,
+        "allow_escaping": False,
+        "allow_running": True,
+        "show_map_name": True,
+        "floor_number": 0,
+        "battle_scene": "MAP_BATTLE_SCENE_NORMAL",
+        "connections": [
+            {"map": "MAP_ROUTE1", "offset": 0, "direction": "up"},
+            {"map": "MAP_ROUTE21_NORTH", "offset": 0, "direction": "down"},
+        ],
+        "object_events": [
+            {
+                "local_id": "LOCALID_PALLET_SIGN_LADY",
+                "type": "object",
+                "graphics_id": "OBJ_EVENT_GFX_WOMAN_1",
+                "x": 3,
+                "y": 10,
+                "elevation": 3,
+                "movement_type": "MOVEMENT_TYPE_WANDER_AROUND",
+                "movement_range_x": 1,
+                "movement_range_y": 4,
+                "trainer_type": "TRAINER_TYPE_NONE",
+                "trainer_sight_or_berry_tree_id": "0",
+                "script": "PalletTown_EventScript_SignLady",
+                "flag": "0",
+            }
+        ],
+        "warp_events": [
+            {
+                "x": 16,
+                "y": 13,
+                "elevation": 0,
+                "dest_map": "MAP_PALLET_TOWN_PROFESSOR_OAKS_LAB",
+                "dest_warp_id": "0",
+            }
+        ],
+        "coord_events": [
+            {
+                "type": "trigger",
+                "x": 12,
+                "y": 1,
+                "elevation": 3,
+                "var": "VAR_MAP_SCENE_PALLET_TOWN_OAK",
+                "var_value": "0",
+                "script": "PalletTown_EventScript_OakTriggerLeft",
+            }
+        ],
+        "bg_events": [
+            {
+                "type": "sign",
+                "x": 16,
+                "y": 16,
+                "elevation": 0,
+                "player_facing_dir": "BG_EVENT_PLAYER_FACING_ANY",
+                "script": "PalletTown_EventScript_OaksLabSign",
+            }
+        ],
+    }
+
+
+def _oaks_lab_map_json() -> dict:
+    """Pret-shaped Oak's Lab. Indoor maps store ``connections: null``."""
+    return {
+        "id": "MAP_PALLET_TOWN_PROFESSOR_OAKS_LAB",
+        "name": "PalletTown_ProfessorOaksLab",
+        "layout": "LAYOUT_PALLET_TOWN_PROFESSOR_OAKS_LAB",
+        "music": "MUS_OAK_LAB",
+        "region_map_section": "MAPSEC_PALLET_TOWN",
+        "requires_flash": False,
+        "weather": "WEATHER_NONE",
+        "map_type": "MAP_TYPE_INDOOR",
+        "allow_cycling": False,
+        "allow_escaping": False,
+        "allow_running": False,
+        "show_map_name": False,
+        "floor_number": 0,
+        "battle_scene": "MAP_BATTLE_SCENE_NORMAL",
+        "connections": None,
+        "object_events": [
+            {
+                "local_id": "LOCALID_OAKS_LAB_PROF_OAK",
+                "type": "object",
+                "graphics_id": "OBJ_EVENT_GFX_PROF_OAK",
+                "x": 6,
+                "y": 3,
+                "elevation": 3,
+                "movement_type": "MOVEMENT_TYPE_FACE_DOWN",
+                "movement_range_x": 1,
+                "movement_range_y": 1,
+                "trainer_type": "TRAINER_TYPE_NONE",
+                "trainer_sight_or_berry_tree_id": "0",
+                "script": "PalletTown_ProfessorOaksLab_EventScript_ProfOak",
+                "flag": "FLAG_HIDE_OAK_IN_HIS_LAB",
+            }
+        ],
+        "warp_events": [
+            {
+                "x": 6,
+                "y": 12,
+                "elevation": 3,
+                "dest_map": "MAP_PALLET_TOWN",
+                "dest_warp_id": "2",
+            }
+        ],
+        "coord_events": [
+            {
+                "type": "trigger",
+                "x": 6,
+                "y": 8,
+                "elevation": 3,
+                "var": "VAR_MAP_SCENE_PALLET_TOWN_PROFESSOR_OAKS_LAB",
+                "var_value": "2",
+                "script": "PalletTown_ProfessorOaksLab_EventScript_LeaveStarterSceneTrigger",
+            }
+        ],
+        "bg_events": [
+            {
+                "type": "sign",
+                "x": 6,
+                "y": 1,
+                "elevation": 0,
+                "player_facing_dir": "BG_EVENT_PLAYER_FACING_ANY",
+                "script": "PalletTown_ProfessorOaksLab_EventScript_LeftSign",
+            }
+        ],
+    }
+
+
+def _install_map_json_decomp(
+    root: Path, doc: dict, map_json_bytes: bytes
+) -> tuple[Path, Path, Path]:
+    """Synthetic layouts.json plus map.bin / border.bin / map.json. No pret checkout."""
+    width = int(doc["dimensions"]["width_metatiles"])
+    height = int(doc["dimensions"]["height_metatiles"])
+    name = doc["name"]
+    block_rel = f"data/layouts/{name}/map.bin"
+    border_rel = f"data/layouts/{name}/border.bin"
+    layout = {
+        "id": doc["layout_id"],
+        "name": f"{name}_Layout",
+        "width": width,
+        "height": height,
+        "border_width": 2,
+        "border_height": 2,
+        "primary_tileset": "gTileset_General",
+        "secondary_tileset": "gTileset_PalletTown",
+        "border_filepath": border_rel,
+        "blockdata_filepath": block_rel,
+    }
+    layouts_path = root / "data" / "layouts" / "layouts.json"
+    layouts_path.parent.mkdir(parents=True)
+    layouts_path.write_text(
+        json.dumps({"layouts": [layout]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    ids = [int(x) for x in doc["blockdata"]["metatile_ids"]]
+    attrs = [int(x) for x in doc["blockdata"]["map_attributes"]]
+    map_bin = root / block_rel
+    map_bin.parent.mkdir(parents=True)
+    map_bin.write_bytes(pack_map_bin(ids, attrs))
+    border_bin = root / border_rel
+    border_bin.write_bytes(pack_map_bin([0, 0, 0, 0], [0, 0, 0, 0]))
+    map_json = root / "data" / "maps" / name / "map.json"
+    map_json.parent.mkdir(parents=True)
+    map_json.write_bytes(map_json_bytes)
+    return map_bin, border_bin, map_json
+
+
+def _self_check_map_json_parity(check: Callable[..., None]) -> None:
+    """map.json merge parity for Pallet Town and Oak's Lab, plus fail-closed fields.
+
+    Synthetic layouts only. Does not touch a pret checkout. Dry-run rebuilds
+    and compares without writing. ``--write`` stores ``plan_map_json`` bytes.
+    Bad or missing fields raise and leave every file as it was.
+    """
+
+    def snapshot(map_bin: Path, border_bin: Path, map_json: Path) -> tuple[bytes, bytes, bytes]:
+        return (map_bin.read_bytes(), border_bin.read_bytes(), map_json.read_bytes())
+
+    def parity(
+        name: str,
+        *,
+        existing: dict,
+        doc: dict,
+        expect: str,
+    ) -> None:
+        """``expect`` is ``match``, ``semantic-diff``, or ``byte-diff``."""
+        on_disk = dump_map_json(existing)
+        planned = plan_map_json(doc, existing)
+        with tempfile.TemporaryDirectory(prefix="serialize-map-json-", dir="/tmp") as tmp:
+            root = Path(tmp)
+            map_bin, border_bin, map_json = _install_map_json_decomp(root, doc, on_disk)
+            snap = snapshot(map_bin, border_bin, map_json)
+            dry_buf = io.StringIO()
+            try:
+                with redirect_stdout(dry_buf):
+                    dry_rc = serialize_one(root, doc, do_write=False, force=False)
+            except SerializeError as e:
+                check(f"{name}: dry-run plan", False, str(e))
+                check(f"{name}: --write parity", False, "skipped after dry-run error")
+                return
+            dry_text = dry_buf.getvalue()
+            dry_kept = snapshot(map_bin, border_bin, map_json) == snap
+            if expect == "match":
+                dry_ok = (
+                    dry_rc == 0
+                    and planned == on_disk
+                    and f"map.json: MATCH ({len(on_disk)} bytes, byte-identical)"
+                    in dry_text
+                    and "mode: dry-run (no writes)" in dry_text
+                    and dry_kept
+                )
+            elif expect == "semantic-diff":
+                dry_ok = (
+                    dry_rc == 1
+                    and planned != on_disk
+                    and "map.json: DIFF semantic" in dry_text
+                    and "mode: dry-run (no writes)" in dry_text
+                    and dry_kept
+                )
+            else:
+                dry_ok = (
+                    dry_rc == 0
+                    and planned != on_disk
+                    and "map.json: SEMANTIC MATCH but bytes differ" in dry_text
+                    and "mode: dry-run (no writes)" in dry_text
+                    and dry_kept
+                )
+            check(
+                f"{name}: dry-run plan",
+                dry_ok,
+                f"rc={dry_rc} kept={dry_kept} planned_len={len(planned)} "
+                f"stdout={dry_text!r}",
+            )
+            write_buf = io.StringIO()
+            try:
+                with redirect_stdout(write_buf):
+                    write_rc = serialize_one(root, doc, do_write=True, force=False)
+            except SerializeError as e:
+                check(f"{name}: --write parity", False, str(e))
+                return
+            written = map_json.read_bytes()
+            bins_kept = (
+                map_bin.read_bytes() == snap[0] and border_bin.read_bytes() == snap[1]
+            )
+            check(
+                f"{name}: --write parity",
+                write_rc == 0 and written == planned and bins_kept,
+                f"rc={write_rc} written_len={len(written)} planned_len={len(planned)} "
+                f"bins_kept={bins_kept} stdout={write_buf.getvalue()!r}",
+            )
+
+    pallet = _pallet_town_map_json()
+    pallet_doc = _parser_slim_doc(pallet, 24, 20)
+    slim_blob = json.dumps(pallet_doc)
+    check(
+        "Pallet Town slim doc drops movement_range and trainer fields",
+        "movement_range_x" not in slim_blob and "trainer_type" not in slim_blob,
+    )
+    parity("Pallet Town merge round-trip", existing=pallet, doc=pallet_doc, expect="match")
+
+    pallet_offset = copy.deepcopy(pallet_doc)
+    pallet_offset["connections"][0]["offset"] = 1
+    parity(
+        "Pallet Town connection offset edit",
+        existing=pallet,
+        doc=pallet_offset,
+        expect="semantic-diff",
+    )
+    edited = json.loads(plan_map_json(pallet_offset, pallet))
+    check(
+        "Pallet Town offset edit keeps unknown keys",
+        edited["connections"][0]["offset"] == 1
+        and edited["region_map_section"] == "MAPSEC_PALLET_TOWN"
+        and edited["requires_flash"] is False
+        and edited["object_events"][0]["movement_range_y"] == 4
+        and edited["object_events"][0]["trainer_sight_or_berry_tree_id"] == "0"
+        and edited["object_events"][0]["type"] == "object",
+    )
+
+    pallet_xy = copy.deepcopy(pallet_doc)
+    pallet_xy["object_events"][0]["x"] = 4
+    parity(
+        "Pallet Town object x edit",
+        existing=pallet,
+        doc=pallet_xy,
+        expect="byte-diff",
+    )
+    moved = json.loads(plan_map_json(pallet_xy, pallet))
+    check(
+        "Pallet Town object x edit keeps movement_range",
+        moved["object_events"][0]["x"] == 4
+        and moved["object_events"][0]["movement_range_x"] == 1
+        and moved["object_events"][0]["movement_range_y"] == 4,
+    )
+
+    lab = _oaks_lab_map_json()
+    lab_doc = _parser_slim_doc(lab, 13, 14)
+    check(
+        "Oak's Lab slim doc has empty connections",
+        lab_doc["connections"] == [] and lab["connections"] is None,
+    )
+    parity("Oak's Lab merge round-trip", existing=lab, doc=lab_doc, expect="match")
+    lab_planned = json.loads(plan_map_json(lab_doc, lab))
+    check(
+        "Oak's Lab round-trip keeps connections null",
+        lab_planned["connections"] is None
+        and lab_planned["object_events"][0]["trainer_type"] == "TRAINER_TYPE_NONE"
+        and lab_planned["show_map_name"] is False,
+    )
+
+    lab_warp = copy.deepcopy(lab_doc)
+    lab_warp["warp_events"][0]["dest_warp_id"] = "9"
+    parity(
+        "Oak's Lab warp edit",
+        existing=lab,
+        doc=lab_warp,
+        expect="semantic-diff",
+    )
+    lab_edited = json.loads(plan_map_json(lab_warp, lab))
+    check(
+        "Oak's Lab warp edit keeps connections null",
+        lab_edited["warp_events"][0]["dest_warp_id"] == "9"
+        and lab_edited["connections"] is None
+        and lab_edited["object_events"][0]["trainer_type"] == "TRAINER_TYPE_NONE"
+        and lab_edited["region_map_section"] == "MAPSEC_PALLET_TOWN",
+    )
+
+    def fail_closed(name: str, doc: dict, needle: str) -> None:
+        on_disk = dump_map_json(pallet)
+        with tempfile.TemporaryDirectory(prefix="serialize-map-json-", dir="/tmp") as tmp:
+            root = Path(tmp)
+            map_bin, border_bin, map_json = _install_map_json_decomp(root, pallet_doc, on_disk)
+            snap = snapshot(map_bin, border_bin, map_json)
+            for do_write, label in ((False, "dry-run"), (True, "--write")):
+                try:
+                    with redirect_stdout(io.StringIO()):
+                        serialize_one(root, doc, do_write=do_write, force=False)
+                except SerializeError as e:
+                    msg = str(e)
+                    unchanged = snapshot(map_bin, border_bin, map_json) == snap
+                    check(
+                        f"{name}: {label} refuses write",
+                        unchanged and needle in msg,
+                        f"unchanged={unchanged} err={msg}",
+                    )
+                else:
+                    check(
+                        f"{name}: {label} refuses write",
+                        False,
+                        "serialize_one returned",
+                    )
+
+    missing_name = copy.deepcopy(pallet_doc)
+    del missing_name["name"]
+    fail_closed("missing name", missing_name, "missing required key 'name'")
+
+    missing_ids = copy.deepcopy(pallet_doc)
+    del missing_ids["blockdata"]["metatile_ids"]
+    fail_closed("missing metatile_ids", missing_ids, "metatile_ids")
+
+    bad_id = copy.deepcopy(pallet_doc)
+    bad_id["blockdata"]["metatile_ids"][0] = METATILE_ID_MAX + 1
+    fail_closed("metatileId 1024", bad_id, "out of range")
+
+    bad_attr = copy.deepcopy(pallet_doc)
+    bad_attr["blockdata"]["map_attributes"][0] = MAP_ATTR_MAX + 1
+    fail_closed("mapAttribute 64", bad_attr, "out of range")
+
+    bool_cell = copy.deepcopy(pallet_doc)
+    bool_cell["blockdata"]["metatile_ids"][0] = True
+    fail_closed("bool metatileId", bool_cell, "expected int")
+
+    string_xy = copy.deepcopy(pallet_doc)
+    string_xy["object_events"][0]["x"] = "3"
+    fail_closed("string object x", string_xy, "expected int")
+
+    oob = copy.deepcopy(pallet_doc)
+    oob["object_events"][0]["x"] = 24
+    fail_closed("OOB object", oob, "outside map bounds")
+
+    missing_dest = copy.deepcopy(pallet_doc)
+    del missing_dest["warp_events"][0]["dest_map"]
+    fail_closed("missing dest_map", missing_dest, "dest_map")
+
+    empty_dest = copy.deepcopy(pallet_doc)
+    empty_dest["warp_events"][0]["dest_map"] = ""
+    fail_closed("empty dest_map", empty_dest, "dest_map")
+
+    missing_warp_id = copy.deepcopy(pallet_doc)
+    del missing_warp_id["warp_events"][0]["dest_warp_id"]
+    fail_closed("missing dest_warp_id", missing_warp_id, "dest_warp_id")
+
+    bool_warp_id = copy.deepcopy(pallet_doc)
+    bool_warp_id["warp_events"][0]["dest_warp_id"] = True
+    fail_closed("bool dest_warp_id", bool_warp_id, "dest_warp_id")
+
+    bad_dir = copy.deepcopy(pallet_doc)
+    bad_dir["connections"][0]["direction"] = "north"
+    fail_closed("bad connection direction", bad_dir, "direction")
+
+    bool_offset = copy.deepcopy(pallet_doc)
+    bool_offset["connections"][0]["offset"] = True
+    fail_closed("bool connection offset", bool_offset, "expected int")
+
+    missing_map = copy.deepcopy(pallet_doc)
+    del missing_map["connections"][0]["map"]
+    fail_closed("missing connection map", missing_map, "map must be a non-empty string")
+
+    bad_event = copy.deepcopy(pallet_doc)
+    bad_event["warp_events"][0] = "nope"
+    fail_closed("warp event not an object", bad_event, "must be an object")
+
+    null_objects = copy.deepcopy(pallet_doc)
+    null_objects["object_events"] = None
+    fail_closed("null object_events", null_objects, "object_events must be a list")
+
+    clone_doc = copy.deepcopy(pallet_doc)
+    clone_doc["object_events"].append(
+        {
+            "type": "clone",
+            "graphics_id": "OBJ_EVENT_GFX_BLUE",
+            "x": -1,
+            "y": 40,
+            "target_local_id": "LOCALID_PALLET_FAT_MAN",
+            "target_map": "MAP_PALLET_TOWN",
+        }
+    )
+    with tempfile.TemporaryDirectory(prefix="serialize-map-json-", dir="/tmp") as tmp:
+        root = Path(tmp)
+        on_disk = dump_map_json(pallet)
+        map_bin, border_bin, map_json = _install_map_json_decomp(root, clone_doc, on_disk)
+        snap = snapshot(map_bin, border_bin, map_json)
+        try:
+            with redirect_stdout(io.StringIO()):
+                clone_rc = serialize_one(root, clone_doc, do_write=False, force=False)
+        except SerializeError as e:
+            check("clone OOB dry-run still plans", False, str(e))
+        else:
+            check(
+                "clone OOB dry-run still plans",
+                clone_rc == 1 and snapshot(map_bin, border_bin, map_json) == snap,
+                f"rc={clone_rc}",
+            )
+
+
+def run_self_check() -> int:
+    """Decomp-free pack/unpack, border.bin and map.json parity, and rollback.
+
+    Border drills prove dry-run and ``--write`` agree, including ``0×0`` and
+    fail-closed size mismatches. Pallet Town and Oak's Lab shapes are
+    synthetic stand-ins for the author-local byte-identity ``--write`` gate.
+    This does not replace that gate, which needs a local pokefirered checkout.
     """
     failures: list[str] = []
 
@@ -1296,6 +1952,7 @@ def run_self_check() -> int:
             )
 
     _self_check_border_parity(check)
+    _self_check_map_json_parity(check)
 
     if failures:
         print(f"self-check: {len(failures)} failed", file=sys.stderr)

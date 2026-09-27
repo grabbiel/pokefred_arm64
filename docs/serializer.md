@@ -28,8 +28,8 @@ Until 4bpp asset writes land, the Python `tools/serialize_map.py` `map.bin` path
 
 ## Validation (fail closed)
 1. `cells.count == width * height`; each `metatileId` in 0…1023; `mapAttribute` in 0…63.
-2. Every event `x,y` inside map bounds, except `object_events` with `type: "clone"` (pret border clones may sit outside the layout). All other events (normal object_events without type clone, warps, coord, bg) remain fail-closed on OOB. Warp `dest_map` / `dest_warp_id` present as strings.
-3. Connection `direction` ∈ {up,down,left,right}; `offset` int.
+2. Every event entry is an object with integer `x,y` inside map bounds, except `object_events` with `type: "clone"` (pret border clones may sit outside the layout). Bool is not an int; numeric strings are refused. All other events (normal object_events without type clone, warps, coord, bg) remain fail-closed on OOB. Warp `dest_map` is a non-empty string. `dest_warp_id` is a non-empty string or an int (not bool). `object_events` / `warp_events` / `coord_events` / `bg_events`, when present, are lists (`null` is refused).
+3. Connection `direction` ∈ {up,down,left,right}; `offset` is an int (not bool); `map` is a non-empty string. `connections` may be `null` (indoor) or a list.
 4. If secondary tileset local metatiles used, ids must be legal for that tileset bank (once tileset metadata is loaded).
 5. Graphics path (later): RGB555, 4bpp, palette index 0 transparent; pack with NEON (see Architecture).
 
@@ -56,7 +56,7 @@ Until 4bpp asset writes land, the Python `tools/serialize_map.py` `map.bin` path
 ## Identity gate vs CI
 The PalletTown + `PalletTown_ProfessorOaksLab` byte-identity `--write` gate (parse → serialize `--write` → `cmp` `map.bin` / `border.bin` / `map.json` against pret) is **author-local / Mac-with-decomp only**. It needs the pokefirered checkout on the machine that owns those layouts. It is not a GitHub Actions check, and it should not become one without the pret decomp and a Mac runner. Do not add a workflow that assumes either.
 
-`tools/serialize_map.py --self-check` is the decomp-free stand-in: it packs and unpacks synthetic blockdata in-process, proves dry-run planning and `--write` packing agree on `border.bin` (border present, border omitted, `0×0`, minimum `1×1`, and fail-closed size or dimension mismatches vs `layouts.json`), and drills cross-file rollback in a temp directory. It does not replace the Mac identity gate.
+`tools/serialize_map.py --self-check` is the decomp-free stand-in: it packs and unpacks synthetic blockdata in-process, proves dry-run planning and `--write` packing agree on `border.bin` (border present, border omitted, `0×0`, minimum `1×1`, and fail-closed size or dimension mismatches vs `layouts.json`), proves `map.json` merge/round-trip parity for Pallet Town and Oak’s Lab shapes (parser-slim doc over pret JSON, unknown keys kept, indoor `connections: null` kept; a valid dry-run rebuilds and compares without writing; `--write` stores that same plan), refuses bad or missing fields without writing, and drills cross-file rollback in a temp directory. It does not replace the Mac identity gate.
 
 ## CLI sketch
 `tools/serialize_map.py --decomp …/pokefirered --doc editor_state.json [--dry-run] [--write] [--force] [MAP_ID…]`
@@ -78,8 +78,10 @@ The PalletTown + `PalletTown_ProfessorOaksLab` byte-identity `--write` gate (par
   `border.bin`, `map.json`, or reading an original). A rollback error is
   reported alongside the original failure; restoring one file still attempts
   the others.
-- `--self-check` runs that pack/unpack, border.bin dry-run/`--write` parity,
-  and rollback drill with no decomp and no GitHub Actions workflow. The
+- `--self-check` runs that pack/unpack, border.bin dry-run/`--write` parity
+  (including `0×0` and fail-closed size or dimension mismatches), `map.json`
+  merge parity for Pallet Town and Oak’s Lab, fail-closed field checks, and
+  the rollback drill with no decomp and no GitHub Actions workflow. The
   PalletTown / OaksLab `--write` byte compare stays author-local on a Mac
   that has the pret decomp.
 - `border.bin`: LE `u16` same packing as `map.bin`; size `border_width *
@@ -94,6 +96,9 @@ The PalletTown + `PalletTown_ProfessorOaksLab` byte-identity `--write` gate (par
   file, preserving unknown top-level keys and per-event fields the parser
   dropped (e.g. `movement_range_*`, `trainer_*`). Dump is `json.dumps(...,
   indent=2) + "\n"` (pret style; byte-stable on reload when order is kept).
+  Dry-run and `--write` share `plan_map_json`, so the bytes compared and the
+  bytes stored are the same plan. A valid dry-run rebuilds and compares and
+  does not write. Bad or missing fields raise before any replace.
 - Empty indoor `connections` stay `null` when pret stored null (not `[]`),
   so round-trip stays byte-identical.
 - Refuse git-dirty targets unless `--force`.
