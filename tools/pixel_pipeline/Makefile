@@ -66,6 +66,9 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/underground_path_tiles.png $(BUILD)/cli_underground_path.4bpp $(BUILD)/cli_underground_path.pal
 	cmp $(BUILD)/cli_underground_path.4bpp tests/golden/underground_path_tiles.4bpp
 	cmp $(BUILD)/cli_underground_path.pal tests/golden/underground_path_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/generic_building_1_tiles.png $(BUILD)/cli_generic_building_1.4bpp $(BUILD)/cli_generic_building_1.pal
+	cmp $(BUILD)/cli_generic_building_1.4bpp tests/golden/generic_building_1_tiles.4bpp
+	cmp $(BUILD)/cli_generic_building_1.pal tests/golden/generic_building_1_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@
