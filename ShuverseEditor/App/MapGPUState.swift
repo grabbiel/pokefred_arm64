@@ -63,12 +63,9 @@ enum RingEnsure {
 
 final class MapGPUState {
     private(set) var metalError: String?
-    private(set) var tileOverlayReady = false
-    private var tileOverlayFault: String?
 
     private var tilePipeline: MTLRenderPipelineState?
     private var spritePipeline: MTLRenderPipelineState?
-    private var tileOverlayPipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private var tileCorners: MTLBuffer?
     private var spriteCorners: MTLBuffer?
@@ -79,17 +76,9 @@ final class MapGPUState {
     private var selectionRing: SharedRingBuffer?
     private var uploadFailed = false
 
-    /// On-chip tile size requested on the render pass. Apple GPUs accept 32×32.
-    static let tileWidth = 32
-    static let tileHeight = 32
-
-    var note: String? {
-        metalError ?? tileOverlayFault
-    }
+    var note: String? { metalError }
 
     func prepare(device: MTLDevice, colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat) {
-        tileOverlayReady = false
-        tileOverlayFault = nil
         do {
             let library = try device.makeLibrary(source: MapShaders.source, options: MapShaders.compileOptions())
             tilePipeline = try makePipeline(
@@ -145,7 +134,6 @@ final class MapGPUState {
             self.markerRing = markerRing
             self.selectionRing = selectionRing
             metalError = nil
-            attachTileOverlay(device: device, library: library, colorFormat: colorFormat)
         } catch {
             metalError = error.localizedDescription
         }
@@ -161,7 +149,7 @@ final class MapGPUState {
         gridDirty: inout RingSlotDirty,
         markerDirty: inout RingSlotDirty,
         selectionDirty: inout RingSlotDirty
-    ) {
+    ) -> Bool {
         guard metalError == nil,
               let tilePipeline,
               let spritePipeline,
@@ -173,7 +161,7 @@ final class MapGPUState {
               let gridRing,
               let markerRing,
               let selectionRing else {
-            return
+            return true
         }
 
         uploadFailed = false
@@ -191,7 +179,7 @@ final class MapGPUState {
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
-        guard !uploadFailed else { return }
+        guard !uploadFailed else { return false }
 
         let cells = grid?.cellCount ?? 0
         let canDraw = cells > 0 && uniforms.viewportWidth > 1 && uniforms.viewportHeight > 1 && uniforms.pointsPerMetatile > 0
@@ -220,18 +208,7 @@ final class MapGPUState {
             }
         }
 
-        // One pass. Depth is `.dontCare` on store, so the overlay kernel only
-        // has to write the color imageblock. Dispatch is opt-in: the geometry
-        // pipelines are separate from the tile pipeline, and a skipped
-        // dispatch still stores color.
-        let dispatchWidth = encoder.tileWidth > 0 ? encoder.tileWidth : Self.tileWidth
-        let dispatchHeight = encoder.tileHeight > 0 ? encoder.tileHeight : Self.tileHeight
-        if uniforms.overlayFlags != 0, tileOverlayReady, canDraw, let overlay = tileOverlayPipeline {
-            encoder.setRenderPipelineState(overlay)
-            encoder.setTileBuffer(uniformRing.buffers[slot], offset: 0, index: 0)
-            encoder.setTileBuffer(gridRing.buffers[slot], offset: 0, index: 1)
-            encoder.dispatchThreadsPerTile(MTLSize(width: dispatchWidth, height: dispatchHeight, depth: 1))
-        }
+        return true
     }
 
     private func upload(
@@ -290,13 +267,13 @@ final class MapGPUState {
         case .grew:
             dirty.markAllDirty()
         case .failed:
-            uploadFailed = true
+            failUpload("Could not allocate a \(max(byteCount, minimumBytes))-byte shared ring (\(ring.label)).")
             return
         case .fit:
             break
         }
         guard byteCount <= ring.byteCapacity else {
-            uploadFailed = true
+            failUpload("Need \(byteCount) bytes in \(ring.label); capacity is \(ring.byteCapacity).")
             return
         }
         guard dirty.isDirty(slot) else { return }
@@ -309,34 +286,9 @@ final class MapGPUState {
         dirty.markClean(slot)
     }
 
-    private func attachTileOverlay(
-        device: MTLDevice,
-        library: MTLLibrary,
-        colorFormat: MTLPixelFormat
-    ) {
-        guard supportsTileShaders(device),
-              let tileFunction = library.makeFunction(name: MapShaders.tileFunction) else {
-            return
-        }
-        do {
-            let descriptor = MTLTileRenderPipelineDescriptor()
-            descriptor.label = "map-tile-overlay"
-            descriptor.tileFunction = tileFunction
-            descriptor.threadgroupSizeMatchesTileSize = true
-            descriptor.rasterSampleCount = 1
-            descriptor.colorAttachments[0].pixelFormat = colorFormat
-            var reflection: MTLAutoreleasedRenderPipelineReflection?
-            tileOverlayPipeline = try device.makeRenderPipelineState(
-                tileDescriptor: descriptor,
-                options: [],
-                reflection: &reflection
-            )
-            tileOverlayReady = true
-            tileOverlayFault = nil
-        } catch {
-            tileOverlayReady = false
-            tileOverlayFault = "Tile overlay pipeline unavailable (\(error.localizedDescription)). Grid draw is active."
-        }
+    private func failUpload(_ detail: String) {
+        uploadFailed = true
+        metalError = "Shared ring upload failed. \(detail)"
     }
 
     private func makePipeline(
@@ -378,10 +330,6 @@ final class MapGPUState {
         }
         buffer?.label = label
         return buffer
-    }
-
-    private func supportsTileShaders(_ device: MTLDevice) -> Bool {
-        device.supportsFamily(.apple7)
     }
 
     private static let tileCornerFloats: [Float] = {

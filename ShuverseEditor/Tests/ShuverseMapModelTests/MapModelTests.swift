@@ -299,7 +299,13 @@ final class MapModelTests: XCTestCase {
         XCTAssertFalse(canvas.contains("GLFW"))
         XCTAssertTrue(gpu.contains(".storageModeShared"))
         XCTAssertTrue(gpu.contains("FrameRing.slotCount"))
-        XCTAssertTrue(gpu.contains("dispatchThreadsPerTile"))
+        XCTAssertFalse(gpu.contains("assertionFailure"))
+        XCTAssertTrue(canvas.contains("assertionFailure"))
+        XCTAssertTrue(gpu.contains("Shared ring upload failed"))
+        XCTAssertFalse(gpu.contains("dispatchThreadsPerTile"))
+        XCTAssertFalse(gpu.contains("MTLTileRenderPipelineDescriptor"))
+        XCTAssertFalse(gpu.contains("tileFunction"))
+        XCTAssertFalse(canvas.contains("dispatchThreadsPerTile"))
         XCTAssertFalse(gpu.contains("GLFW"))
     }
 

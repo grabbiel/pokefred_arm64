@@ -33,13 +33,8 @@ Sprite and canopy are not drawn yet. Later draws use the same depth-stencil stat
 
 ## TBDR overlays
 
-Tiles, markers, and the selection outline are batched in a single encoder. That keeps the color attachment on-chip until the pass ends.
+Tiles, markers, and the selection outline are batched in a single encoder. That keeps the color attachment on-chip until the pass ends. Selection is the depth-tested quads only.
 
-`map_tile_overlay` is a tile kernel. It reads the color imageblock, optionally tints cells whose map attribute is non-zero, optionally stamps the selection border, and writes the imageblock back. Those pixels never round-trip through a separate overlay target.
+`map_tile_overlay` in `MapShaders.swift` is the future imageblock kernel: it would tint cells whose map attribute is non-zero (`MapOverlayFlags.collisionTint`, scale `MapTileOverlay.collisionTintScale`) and stamp a gold selection border (`MapOverlayFlags.selectionOutline`). World position matches `MapTileOverlay.world`. macOS builds do not create a tile render pipeline and do not dispatch that kernel. `tileFunction` / `tileWidth` on `MTLRenderPipeline*` are not the macOS path, so the app does not call them. `overlayFlags` stays in the uniform struct for that future kernel and defaults to 0. Turning on `selectionOutline` does not draw a second border.
 
-On macOS the kernel is a separate `MTLTileRenderPipelineDescriptor` (`threadgroupSizeMatchesTileSize`, color format matching the drawable). The pass asks for 32×32 tiles. `dispatchThreadsPerTile` uses the encoder’s tile size. Geometry pipelines stay free of that kernel, so skipping the dispatch still stores color. Dispatch runs only when `MapCanvasView.overlayFlags` is non-zero:
-
-- `MapOverlayFlags.collisionTint` — darken attribute ≠ 0 by `MapTileOverlay.collisionTintScale` (0.82)
-- `MapOverlayFlags.selectionOutline` — gold border in the imageblock. Leave this off while the depth-tested outline quads are drawn, or the border is drawn twice. The tile-shader border does not write depth.
-
-Both flags default to 0, so Pallet Town looks the same as the quad path. World position in the kernel matches `MapTileOverlay.world` (`pixel / pixelScale` is a point, then the camera origin).
+A shared-ring grow that cannot allocate sets `MapGPUState.note` (shown in the inspector) and fails the frame. Debug builds also hit `assertionFailure`.

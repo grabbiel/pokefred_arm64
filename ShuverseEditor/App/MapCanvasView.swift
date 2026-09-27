@@ -9,8 +9,8 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
     var onRendererNote: ((String?) -> Void)?
     var onDropURL: ((URL) -> Void)?
 
-    /// Imageblock overlay bits (`MapOverlayFlags`). Default 0 keeps selection
-    /// as depth-tested quads. Non-zero dispatches `map_tile_overlay`.
+    /// Reserved for a future imageblock overlay (`MapOverlayFlags`). macOS does
+    /// not dispatch that kernel; selection stays on the depth-tested quads.
     var overlayFlags: UInt32 = 0 {
         didSet {
             guard overlayFlags != oldValue else { return }
@@ -126,17 +126,22 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         }
         let slot = frameRing.nextSlot()
         commandBuffer.label = "map-frame"
-        gpu.encode(
+        let uploaded = gpu.encode(
             encoder: encoder,
             slot: slot,
             grid: grid,
             markers: markers,
             selection: selectionInstances,
-            uniforms: makeUniforms(tileWidth: encoder.tileWidth, tileHeight: encoder.tileHeight),
+            uniforms: makeUniforms(),
             gridDirty: &gridDirty,
             markerDirty: &markerDirty,
             selectionDirty: &selectionDirty
         )
+        publishRendererNote()
+        if !uploaded {
+            let message = gpu.note ?? "Shared ring upload failed."
+            assertionFailure(message)
+        }
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.addCompletedHandler { [inflightFrames] _ in
@@ -278,8 +283,6 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         descriptor.depthAttachment.loadAction = .clear
         descriptor.depthAttachment.storeAction = .dontCare
         descriptor.depthAttachment.clearDepth = Double(MapDepth.clear)
-        descriptor.tileWidth = MapGPUState.tileWidth
-        descriptor.tileHeight = MapGPUState.tileHeight
     }
 
     private func prepareMetal() {
@@ -290,19 +293,23 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         }
         commandQueue = device.makeCommandQueue()
         gpu.prepare(device: device, colorFormat: colorPixelFormat, depthFormat: depthStencilPixelFormat)
-        metalError = gpu.note
+        publishRendererNote()
+    }
+
+    private func publishRendererNote() {
+        let note = gpu.note
+        guard note != metalError else { return }
+        metalError = note
         onRendererNote?(metalError)
     }
 
-    private func makeUniforms(tileWidth: Int, tileHeight: Int) -> MapGPUUniforms {
+    private func makeUniforms() -> MapGPUUniforms {
         let scale: Float
         if bounds.width > 1, drawableSize.width > 0 {
             scale = Float(drawableSize.width / bounds.width)
         } else {
             scale = 1
         }
-        let resolvedTileWidth = tileWidth > 0 ? tileWidth : MapGPUState.tileWidth
-        let resolvedTileHeight = tileHeight > 0 ? tileHeight : MapGPUState.tileHeight
         return MapGPUUniforms(
             originX: camera.originX,
             originY: camera.originY,
@@ -314,9 +321,7 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             gridHeight: UInt32(max(grid?.height ?? 0, 0)),
             selectedX: Int32(selection?.x ?? -1),
             selectedY: Int32(selection?.y ?? -1),
-            overlayFlags: overlayFlags,
-            tileWidth: UInt32(resolvedTileWidth),
-            tileHeight: UInt32(resolvedTileHeight)
+            overlayFlags: overlayFlags
         )
     }
 

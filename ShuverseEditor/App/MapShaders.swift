@@ -62,9 +62,9 @@ enum MapShaders {
 
     /// MSL compiled at runtime with `makeLibrary(source:)`. CI extracts this
     /// string and runs `metal -c`. `Uniforms` is `MapGPUUniforms` (64 bytes).
-    /// Vertex and fragment inputs use `[[stage_in]]`. The tile kernel is the
-    /// imageblock overlay path; draw pipelines do not attach it unless
-    /// `overlayFlags` is non-zero.
+    /// Vertex and fragment inputs use `[[stage_in]]`. `map_tile_overlay` is
+    /// kept for a future imageblock path. macOS does not attach it: the tile
+    /// render-pipeline APIs are not used by this app.
     static let source = """
     #include <metal_stdlib>
     using namespace metal;
@@ -156,10 +156,10 @@ enum MapShaders {
         float4 color [[color(0)]];
     };
 
-    // TBDR imageblock overlay. Selection and collision stay on-chip.
+    // Future TBDR imageblock overlay. Not bound on macOS.
     // World math matches MapTileOverlay.world / hitsSelectionBorder.
-    // Draw pipelines omit this kernel until overlayFlags is non-zero,
-    // so a skipped dispatch still stores the color attachment.
+    // Selection quads are the v1 outline, so this kernel must not run
+    // alongside them or the border is drawn twice.
     kernel void map_tile_overlay(
         imageblock<TilePixel> imageBlock,
         ushort2 tid [[thread_position_in_threadgroup]],
