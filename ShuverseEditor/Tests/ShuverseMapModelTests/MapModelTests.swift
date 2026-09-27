@@ -79,6 +79,38 @@ final class MapModelTests: XCTestCase {
 
         XCTAssertEqual(map.connections.map(\.direction), ["up", "down"])
         XCTAssertEqual(map.connections.map(\.map), ["MAP_ROUTE1", "MAP_ROUTE21_NORTH"])
+
+        let rows = MapEventCatalog.rows(for: map)
+        XCTAssertEqual(rows.filter { $0.kind == "object" }.count, map.objectEvents.count)
+        XCTAssertEqual(rows.filter { $0.kind == "warp" }.count, map.warpEvents.count)
+        XCTAssertEqual(rows.filter { $0.kind == "trigger" }.count, map.coordEvents.count)
+        XCTAssertEqual(rows.filter { $0.kind == "sign" }.count, map.bgEvents.count)
+
+        let lady = try XCTUnwrap(MapEventCatalog.row(key: "object:0", in: map))
+        XCTAssertEqual(lady.x, 3)
+        XCTAssertEqual(lady.y, 10)
+        XCTAssertTrue(lady.title.contains("LOCALID_PALLET_SIGN_LADY"))
+        XCTAssertTrue(lady.detail.contains("PalletTown_EventScript_SignLady"))
+        XCTAssertEqual(map.inspection(x: lady.x, y: lady.y)?.objectEvents.map(\.localId), ["LOCALID_PALLET_SIGN_LADY"])
+
+        let house = try XCTUnwrap(MapEventCatalog.row(key: "warp:0", in: map))
+        XCTAssertEqual(house.x, 6)
+        XCTAssertEqual(house.y, 7)
+        XCTAssertTrue(house.title.contains("MAP_PALLET_TOWN_PLAYERS_HOUSE_1F"))
+        XCTAssertTrue(house.title.contains("#1"))
+
+        let oak = try XCTUnwrap(MapEventCatalog.row(key: "trigger:0", in: map))
+        XCTAssertEqual(oak.x, 12)
+        XCTAssertEqual(oak.y, 1)
+        XCTAssertTrue(oak.detail.contains("VAR_MAP_SCENE_PALLET_TOWN_OAK"))
+        XCTAssertTrue(oak.detail.contains("PalletTown_EventScript_OakTriggerLeft"))
+
+        let labSign = try XCTUnwrap(MapEventCatalog.row(key: "bg:0", in: map))
+        XCTAssertEqual(labSign.kind, "sign")
+        XCTAssertEqual(labSign.x, 16)
+        XCTAssertEqual(labSign.y, 16)
+        XCTAssertTrue(labSign.title.contains("PalletTown_EventScript_OaksLabSign"))
+        XCTAssertNil(MapEventCatalog.row(key: "object:99", in: map))
     }
 
     func testPalletTownRoundTripPreservesCellsAndEvents() throws {

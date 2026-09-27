@@ -61,10 +61,11 @@ File → Open Map JSON…, File → Open Pallet Town Sample, or drop a `.json` f
 
 ## Docks
 
-A transparent `MTKView` covers the window and draws four Dear ImGui panels: **Map List**, **Inspector**, **Status**, and **Tileset**. The center dock node is empty and pass-through, so the Metal map stays visible there.
+A transparent `MTKView` covers the window and draws Dear ImGui panels: **Map List**, **Inspector**, **Events**, **Status**, and **Tileset**. The center dock node is empty and pass-through, so the Metal map stays visible there.
 
 - Map List shows open maps (the sample name is enough when only Pallet Town is loaded) and can open the sample or a JSON file.
 - Inspector shows the same cell and event text as before (metatile id, attribute, packed `u16`, object / warp / trigger / sign).
+- Events lists objects, warps, triggers, and signs from the active map. Click a row to show that event and to point the inspector at its cell. The list is read-only.
 - Status shows zoom, pan, the selected cell, and the renderer note.
 - Tileset shows the active map's metatiles decoded from its 4bpp atlas and RGB555 palette (`MetatileSwatchSheet`, same pixels as `GBATileset.sample`). Click a swatch to store that id on `EditorDocument.brushMetatileId`. The click does not paint. Those pixels are an ImGui texture, not a change to the map canvas pass. Maps without a loaded 4bpp atlas keep the names and a short note.
 
