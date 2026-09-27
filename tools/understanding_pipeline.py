@@ -258,6 +258,7 @@ def run_cycle(
         "count": len(script_maps),
         "corridor_preset": list(ps.CORRIDOR_MAPS),
         "cerulean_cluster_preset": list(ps.CERULEAN_CLUSTER_MAPS),
+        "vermilion_cluster_preset": list(ps.VERMILION_CLUSTER_MAPS),
         "script_coverage_preset": list(ps.SCRIPT_COVERAGE_MAPS),
         "note": (
             "Additive *.scripts.json via tools/parse_scripts.py (stdlib). "
@@ -298,9 +299,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skip-parse", action="store_true", help="Reuse existing parsed/*.json")
     p.add_argument("--skip-serialize", action="store_true")
     p.add_argument(
+        "--scripts-coverage",
+        action="store_true",
+        help="Also refresh all script-coverage presets (slices 1–3 union) via parse_scripts",
+    )
+    p.add_argument(
         "--scripts-corridor",
         action="store_true",
-        help="Also refresh all script-coverage presets (corridor ∪ Cerulean) via parse_scripts",
+        help="Deprecated alias for --scripts-coverage (kept for older docs / muscle memory)",
     )
     args = p.parse_args(argv)
 
@@ -313,9 +319,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"understanding_pipeline starting at {now_iso_lima()}")
     print(f"  decomp:     {decomp}")
     print(f"  workspace:  {workspace}")
-    if args.scripts_corridor:
+    if args.scripts_coverage or args.scripts_corridor:
         import parse_scripts as ps  # noqa: E402
 
+        if args.scripts_corridor and not args.scripts_coverage:
+            print(
+                "note: --scripts-corridor is a deprecated alias; prefer --scripts-coverage",
+                file=sys.stderr,
+            )
         rc = ps.main(
             ["--script-coverage", "--decomp", str(decomp), "--workspace", str(workspace)]
         )

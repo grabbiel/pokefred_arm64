@@ -80,3 +80,4 @@ GPU notes (shared grid, triple-buffering, depth, tile-shader overlays): [docs/me
 - Scroll wheel, pinch, or ⌘-scroll to zoom toward the pointer. Menu or `+` / `-` zoom about the center. `0` or `f` fits the map. Arrow keys pan.
 - Marker colors: white object, gold warp, cyan trigger, orange sign. The gold outline is the selection.
 - Pallet Town ground pixels come from `Samples/tilesets/pallet_town/` (primary + secondary `.4bpp`, 32-byte RGB555 `.pal` banks, pret `metatiles.bin`). Formats match `tools/pixel_pipeline/CONTRACT.md`. Rebuild with `Scripts/bake_pallet_town_tiles.py`. `MetatileColor` is not uploaded.
+- Pallet Town water (tiles 416–419) cycles a stub animation on that same atlas. The status line shows `water frame N`. The frames are not a second tileset; see [docs/metal_gpu.md](../docs/metal_gpu.md).
