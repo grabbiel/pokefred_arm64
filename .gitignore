@@ -65,3 +65,9 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .DS_Store
+
+# Local / generated (Workspace I/O)
+source/
+parsed/
+pallet_town_parsed.json
+.shuverse-locks/
