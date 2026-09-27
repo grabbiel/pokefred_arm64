@@ -106,7 +106,8 @@ static int check_origin(void)
         "tanoby_ruins_tiles.png data/tilesets/secondary/tanoby_ruins/tiles.png\n"
         "game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png\n"
         "pallet_town_tiles.png data/tilesets/secondary/pallet_town/tiles.png\n"
-        "mart_tiles.png data/tilesets/secondary/mart/tiles.png\n";
+        "mart_tiles.png data/tilesets/secondary/mart/tiles.png\n"
+        "school_tiles.png data/tilesets/secondary/school/tiles.png\n";
     uint8_t *origin = NULL;
     size_t origin_n = 0;
 
@@ -288,6 +289,22 @@ static int check_mart_details(void)
     return 0;
 }
 
+static int check_school_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+
+    REQUIRE(pp_png_decode_file("testdata/school_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
 int main(void)
 {
     REQUIRE(check_origin() == 0);
@@ -307,6 +324,10 @@ int main(void)
     REQUIRE(check_fixture("mart", "testdata/mart_tiles.png", "tests/golden/mart_tiles.4bpp",
                           "tests/golden/mart_tiles.pal", "build/mart_tiles.4bpp",
                           "build/mart_tiles.pal", 128, 24, 1536u) == 0);
+    REQUIRE(check_school_details() == 0);
+    REQUIRE(check_fixture("school", "testdata/school_tiles.png", "tests/golden/school_tiles.4bpp",
+                          "tests/golden/school_tiles.pal", "build/school_tiles.4bpp",
+                          "build/school_tiles.pal", 128, 32, 2048u) == 0);
 
     EXPECT(pp_convert_png_to_gba(NULL, "build/x.4bpp", "build/x.pal", NULL) == 1);
     EXPECT(pp_convert_png_to_gba("testdata/missing.png", "build/x.4bpp", "build/x.pal", NULL) == 1);

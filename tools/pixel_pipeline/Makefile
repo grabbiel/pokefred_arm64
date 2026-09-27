@@ -60,6 +60,9 @@ test: all
 	./$(BUILD)/pixel_pipeline testdata/mart_tiles.png $(BUILD)/cli_mart.4bpp $(BUILD)/cli_mart.pal
 	cmp $(BUILD)/cli_mart.4bpp tests/golden/mart_tiles.4bpp
 	cmp $(BUILD)/cli_mart.pal tests/golden/mart_tiles.pal
+	./$(BUILD)/pixel_pipeline testdata/school_tiles.png $(BUILD)/cli_school.4bpp $(BUILD)/cli_school.pal
+	cmp $(BUILD)/cli_school.4bpp tests/golden/school_tiles.4bpp
+	cmp $(BUILD)/cli_school.pal tests/golden/school_tiles.pal
 
 $(BUILD) $(BUILD)/tests:
 	mkdir -p $@
