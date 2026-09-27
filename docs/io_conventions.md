@@ -6,33 +6,37 @@ Owned by Workspace I/O. Other bots follow this so concurrent Metal / Editor UI /
 
 | Path | Role | Git |
 |---|---|---|
-| `ShuverseEditor/` | Metal editor (arm64) | tracked |
-| `tools/pixel_pipeline/` | GBA 4bpp pixel crunch | tracked |
+| `ShuverseEditor/` | Metal map canvas + Dear ImGui dock shell (arm64) | tracked |
+| `ShuverseEditor/ImGuiHost/` | Vendored ImGui + C host (Editor UI) | tracked |
+| `ShuverseEditor/Samples/` | Parser JSON + baked tileset bits for demos | tracked |
+| `tools/pixel_pipeline/` | GBA 4bpp pixel crunch (CLI + goldens) | tracked |
 | `tools/*.py` | Map/script parse + serialize CLIs | track when ready (separate PR OK) |
 | `docs/` | Suite contracts | tracked |
-| `parsed/` | Generated map JSON cache | **gitignore** |
-| `source/` | Nested RGBDS tree (local only) | **gitignore** |
-| `pallet_town_parsed.json` | Local sample dump | **gitignore** |
-| `.shuverse-locks/` | Per-path write locks | **gitignore** |
+| `/parsed/` | Generated map JSON cache (repo root) | **gitignore** |
+| `/source/` | Nested RGBDS tree at repo root only | **gitignore** |
+| `pallet_town_parsed.json` | Local sample dump at repo root | **gitignore** |
+| `/.shuverse-locks/` | Per-path write locks | **gitignore** |
 | pret `pokefirered` (sibling decomp) | Read-only source of truth | never rewrite without dry-run + user save |
+
+Root-anchored ignores (`/source/`, `/parsed/`, `/.shuverse-locks/`) must stay anchored so they cannot case-fold into `ShuverseEditor/Sources/` or similar.
 
 ## Protected shared files
 
-Only Workspace I/O (or an explicitly coordinated PR) may change:
+Only Workspace I/O (or an explicitly coordinated tiny PR) may change:
 
 - root `.gitignore`
 - `.github/workflows/*`
 - root `CMakeLists.txt` / top-level build manifests (when present)
 - this file (`docs/io_conventions.md`)
 
-Feature bots edit only their owned trees. Need a shared-file change? Open a tiny PR that touches only that file and link it from your feature PR — do not bake `.gitignore` or workflow edits into unrelated Metal/pixel PRs.
+Feature bots edit only their owned trees. Need a shared-file change? Open a tiny PR that touches only that file and link it from your feature PR — do not bake `.gitignore` or workflow edits into unrelated Metal / ImGui / pixel PRs.
 
 ## Branch hygiene
 
 - One concern per branch/PR.
 - Name branches `cursor/<area>-<short-slug>` (existing convention).
 - Rebase/ff onto `main` before review; do not force-push shared branches.
-- Never commit `parsed/`, `source/`, `__pycache__/`, `.build/`, or lock files.
+- Never commit `/parsed/`, `/source/`, `__pycache__/`, `.build/`, or lock files.
 
 ## Write locks (local multi-agent)
 
@@ -50,7 +54,10 @@ Before writing a path under this workspace:
 | AST Parser | `parsed/` (local cache), read decomp |
 | Serializer | decomp map artifacts only after dry-run + user intent |
 | Pixel Pipeline | `tools/pixel_pipeline/` |
-| Metal / Editor UI | `ShuverseEditor/` |
-| Workspace I/O | locks, `.gitignore`, workflows, `docs/io_conventions.md`, coordination |
+| Metal Render | `ShuverseEditor/` map GPU / shaders / tileset upload (not ImGui host) |
+| Editor UI | `ShuverseEditor/ImGuiHost/`, dock overlay / routing inside `ShuverseEditor/` |
+| Workspace I/O | locks, root `.gitignore`, workflows, `docs/io_conventions.md`, coordination |
+
+ImGui and the map canvas share the window but use **separate** Metal command queues. Do not merge their buffer ownership or stall either path on disk I/O.
 
 Hand results in chat after each batch; clear locks in a `finally` path.
