@@ -49,7 +49,7 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_Clerk|Items::", re.I), "Poké Mart clerk / item list."),
     (re.compile(r"Colosseum|TradeCenter|RecordCorner", re.I), "Pokémon Center 2F link-room attendant."),
     (re.compile(r"EventScript_Brock|DefeatedBrock|GiveTM39", re.I), "Gym Leader Brock battle / TM39 reward."),
-    (re.compile(r"EventScript_Giovanni|DefeatedGiovanni|GiveTM26", re.I), "Gym Leader Giovanni battle / TM26 reward."),
+    (re.compile(r"ViridianCity_Gym_EventScript_Giovanni|DefeatedGiovanni|GiveTM26", re.I), "Gym Leader Giovanni battle / TM26 reward."),
     (re.compile(r"GymGuy|GymStatue", re.I), "Gym tip guy or victory statue text."),
     (re.compile(r"EventScript_Aide\b|AlreadyGotHM05", re.I), "Oak aide HM/item gift (Route 2 gate; dex-count gated)."),
     (re.compile(r"EventScript_Reyley|DeclineTrade|AlreadyTraded|NotRequestedMon", re.I), "In-game trade NPC."),
@@ -94,6 +94,26 @@ HEURISTIC_SUMMARY = [
     (re.compile(r"EventScript_Machop\b", re.I), "Vermilion Machop NPC (strength demo / flavor)."),
     (re.compile(r"NorthRockTunnelSign|SouthRockTunnelSign|PowerPlantSign|DiglettsCaveSign|RouteSign", re.I), "Route / cave / plant area sign."),
     (re.compile(r"SSAnne_Kitchen_EventScript_|SalmonDuSalad|EelsAuBarbecue|PrimeBeefsteak", re.I), "SS Anne kitchen chef / menu flavor."),
+    # Celadon / Game Corner / Rocket Hideout / Cycling Road (Routes 16–18) — slice 5
+    (re.compile(r"EventScript_Erika|DefeatedErika|GiveTM19|TM19\b|NoRoomForTM19", re.I), "Gym Leader Erika battle / TM19 Giga Drain reward."),
+    (re.compile(r"SoftboiledTutor", re.I), "Celadon Softboiled move tutor."),
+    (re.compile(r"CoinCase|AlreadyGotCoinCase|NoRoomForCoinCase", re.I), "Celadon Restaurant: Coin Case gift (Game Corner)."),
+    (re.compile(r"TeaWoman|AfterTea|MentionDaisy", re.I), "Celadon Condominiums: Tea gift (needed for Saffron guards)."),
+    (re.compile(r"CoinsClerk|BuyCoins|Buy500Coins|Buy50Coins|BoughtCoins|ClerkNoCoinCase|ClerkNoRoomForCoins|ClerkNotEnoughMoney|ClerkDeclineBuy", re.I), "Game Corner coin clerk / purchase flow."),
+    (re.compile(r"SlotMachine|DontPlaySlotMachine|UnusableSlotMachine|FaceSlotMachine", re.I), "Game Corner slot machine interact."),
+    (re.compile(r"PrizeClerk|PrizeMon|ChoosePrizeMon|ConfirmPrizeMon|PrizeExchange|EndPrizeExchange|GiveAbra|GiveClefairy|GiveDratini|GiveScyther|GivePorygon|GivePinsir|PartyFull|CheckReceivedMon", re.I), "Game Corner prize exchange (coins → Pokémon)."),
+    (re.compile(r"OpenRocketHideout|HideRocketHideout|Poster\b", re.I), "Game Corner poster: opens Rocket Hideout stairs."),
+    (re.compile(r"Giovanni|SilphScope|LiftKey|NeedKey", re.I), "Rocket Hideout: Giovanni / Silph Scope / Lift Key."),
+    (re.compile(r"SetBarrier|RemoveBarrier|DrawMapForBarrierRemoval|CountGruntDefeated", re.I), "Rocket Hideout barrier / grunt-progress triggers."),
+    (re.compile(r"FloorSelect|ChooseFloor|MoveElevator|ToB1F|ToB2F|ToB4F|ExitFloorSelect", re.I), "Rocket Hideout elevator floor select."),
+    (re.compile(r"NeedBike|DisableNeedBike|CyclingRoad", re.I), "Cycling Road gate: bicycle required / road state."),
+    (re.compile(r"Route16_EventScript_Snorlax|RemoveSnorlax|DontUsePokeFlute|FoughtSnorlax|SnorlaxNoPokeFlute|PokeFlute", re.I), "Route 16 Snorlax / Poké Flute wake encounter."),
+    (re.compile(r"Route16_House_EventScript_Woman|NoRoomForHM02|AlreadyGotHM02|HM02\b", re.I), "Route 16 house: HM02 Fly gift."),
+    (re.compile(r"CompletedPokedex|ShowDiploma|GraphicArtist|Programmer|Writer|Designer", re.I), "Celadon Condominiums Game Freak staff / diploma."),
+    (re.compile(r"CitySign|GymSign|MansionSign|DeptStoreSign|PrizeExchangeSign|GameCornerSign|CyclingRoadSign|LayoutSign|FloorSign|SuiteSign|DevelopmentRoomSign|MeetingRoomSign", re.I), "Celadon / Cycling Road landmark or floor sign."),
+    (re.compile(r"Poliwrath\b|Meowth\b|Clefairy\b|Nidoran\b|Fearow\b", re.I), "Celadon / Route 16 house Pokémon NPC flavor."),
+    (re.compile(r"ClerkXItems|ClerkVitamins|XItems|Vitamins", re.I), "Dept Store clerk inventory (X items / vitamins)."),
+    (re.compile(r"RocketGrunt|DefeatedGrunt", re.I), "Team Rocket grunt battle / dialogue."),
     # Generic trainers (after specific leaders)
     (re.compile(r"EventScript_(Rick|Doug|Sammy|Anthony|Charlie|Liam|Jason|Cole|Atsushi|Kiyo|Takashi|Samuel|Yuji|Warren)\b", re.I), "Trainer battle script (see body for trainerbattle_*)."),
     (re.compile(r"Rival\b", re.I), "Rival interact dialogue (waits for / reacts to starter choice)."),
@@ -422,9 +442,47 @@ VERMILION_CLUSTER_MAPS = [
     "SSAnne_B1F_Corridor",
 ]
 
-# Union of known additive script-coverage presets (slices 1–3)
+
+# Slice 5: Celadon City (+ dept store / Game Corner / Rocket Hideout) →
+# Routes 16–18 Cycling Road + gates (independent of held Lavender #21)
+CELADON_CLUSTER_MAPS = [
+    "CeladonCity",
+    "CeladonCity_Condominiums_1F",
+    "CeladonCity_Condominiums_3F",
+    "CeladonCity_DepartmentStore_1F",
+    "CeladonCity_DepartmentStore_2F",
+    "CeladonCity_DepartmentStore_3F",
+    "CeladonCity_DepartmentStore_4F",
+    "CeladonCity_DepartmentStore_5F",
+    "CeladonCity_DepartmentStore_Elevator",
+    "CeladonCity_DepartmentStore_Roof",
+    "CeladonCity_GameCorner",
+    "CeladonCity_GameCorner_PrizeRoom",
+    "CeladonCity_Gym",
+    "CeladonCity_House1",
+    "CeladonCity_PokemonCenter_1F",
+    "CeladonCity_PokemonCenter_2F",
+    "CeladonCity_Restaurant",
+    "RocketHideout_B1F",
+    "RocketHideout_B2F",
+    "RocketHideout_B3F",
+    "RocketHideout_B4F",
+    "RocketHideout_Elevator",
+    "Route16",
+    "Route16_House",
+    "Route16_NorthEntrance_1F",
+    "Route16_NorthEntrance_2F",
+    "Route17",
+    "Route18",
+    "Route18_EastEntrance_1F",
+    "Route18_EastEntrance_2F",
+]
+
+# Union of known additive script-coverage presets (slices 1–3 + 5; Lavender #21 held separately)
 SCRIPT_COVERAGE_MAPS = list(
-    dict.fromkeys([*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS, *VERMILION_CLUSTER_MAPS])
+    dict.fromkeys(
+        [*CORRIDOR_MAPS, *CERULEAN_CLUSTER_MAPS, *VERMILION_CLUSTER_MAPS, *CELADON_CLUSTER_MAPS]
+    )
 )
 
 
@@ -454,9 +512,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Parse Vermilion→Rock Tunnel→Routes9–11→SS Anne cluster (slice 3)",
     )
     p.add_argument(
+        "--celadon",
+        action="store_true",
+        help="Parse Celadon→Game Corner/Rocket Hideout→Routes16–18 Cycling Road cluster (slice 5)",
+    )
+    p.add_argument(
         "--script-coverage",
         action="store_true",
-        help="Parse all known script-coverage presets (slices 1–3 union)",
+        help="Parse all known script-coverage presets (slices 1–3+5 union)",
     )
     p.add_argument("--all-parsed", action="store_true", help="Parse every map with parsed/<Name>.json")
     p.add_argument("--decomp", type=Path, default=DEFAULT_DECOMP)
@@ -475,6 +538,8 @@ def main(argv: list[str] | None = None) -> int:
             maps.extend(CERULEAN_CLUSTER_MAPS)
         if args.vermilion:
             maps.extend(VERMILION_CLUSTER_MAPS)
+        if args.celadon:
+            maps.extend(CELADON_CLUSTER_MAPS)
     if args.all_parsed:
         maps.extend(
             sorted(
@@ -493,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
             seen.add(m)
             ordered.append(m)
     if not ordered:
-        p.error("provide map names and/or --corridor / --cerulean / --vermilion / --script-coverage / --all-parsed")
+        p.error("provide map names and/or --corridor / --cerulean / --vermilion / --celadon / --script-coverage / --all-parsed")
 
     fails = 0
     for m in ordered:
