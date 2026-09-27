@@ -1,5 +1,7 @@
+#include "pixel_pipeline.h"
 #include "png_decode.h"
 #include "quantize.h"
+#include "rgb555_neon.h"
 #include "rgb555_scalar.h"
 #include "test_common.h"
 #include "tile_pack.h"
@@ -97,62 +99,64 @@ static int unpack_matches(const uint8_t *tiles, const uint8_t *indices, int w, i
     return 0;
 }
 
-int main(void)
+static int check_origin(void)
 {
-    static const char origin_expect[] = "data/tilesets/secondary/tanoby_ruins/tiles.png\n";
-    pp_image img;
-    pp_indexed indexed;
-    pp_gba gba;
+    static const char origin_expect[] =
+        "# pret/pokefirered fixtures. One record per line: <basename> <source path>\n"
+        "tanoby_ruins_tiles.png data/tilesets/secondary/tanoby_ruins/tiles.png\n"
+        "game_corner_tiles.png data/tilesets/secondary/game_corner/tiles.png\n";
     uint8_t *origin = NULL;
     size_t origin_n = 0;
-    uint8_t *gold_bpp = NULL;
-    size_t gold_bpp_n = 0;
-    uint8_t *gold_pal = NULL;
-    size_t gold_pal_n = 0;
-    uint8_t *scalar_tiles = NULL;
-    uint8_t written_pal[32];
-    int i;
-    const char *err;
 
     origin = read_file("testdata/ORIGIN.txt", &origin_n);
     REQUIRE(origin != NULL);
     EXPECT(origin_n == sizeof origin_expect - 1u);
     EXPECT(memcmp(origin, origin_expect, sizeof origin_expect - 1u) == 0);
+    free(origin);
+    return 0;
+}
+
+/* In-memory scalar pipeline vs the committed golden, then the public API
+ * writes the same bytes under build/ (gitignored). */
+static int check_fixture(const char *label, const char *png, const char *gold_bpp_path, const char *gold_pal_path,
+                         const char *out_bpp, const char *out_pal, int width, int height, size_t tiles_size)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+    pp_convert_result info;
+    uint8_t *gold_bpp = NULL;
+    size_t gold_bpp_n = 0;
+    uint8_t *gold_pal = NULL;
+    size_t gold_pal_n = 0;
+    uint8_t *scalar_tiles = NULL;
+    uint8_t *disk = NULL;
+    uint8_t written_pal[32];
+    size_t n = 0;
+    int i;
+    const char *err;
+    char bpp_label[64];
+    char pal_label[64];
 
     err = NULL;
-    if (pp_png_decode_file("testdata/tanoby_ruins_tiles.png", &img) != 0) {
+    if (pp_png_decode_file(png, &img) != 0) {
         err = pp_png_last_error();
-        fprintf(stderr, "decode failed: %s\n", err ? err : "");
-        free(origin);
+        fprintf(stderr, "%s decode failed: %s\n", label, err ? err : "");
         return 1;
     }
-    EXPECT(img.width == 128);
-    EXPECT(img.height == 40);
-    EXPECT(img.indexed == 1);
-    EXPECT(img.plte_count == 16);
-    EXPECT(img.has_trns == 0);
+    EXPECT(img.width == width);
+    EXPECT(img.height == height);
     REQUIRE(img.rgba != NULL);
     EXPECT(((uintptr_t)img.rgba % 128u) == 0);
 
     REQUIRE(pp_quantize(&img, &indexed) == 0);
     REQUIRE(indexed.indices != NULL);
     EXPECT(((uintptr_t)indexed.indices % 128u) == 0);
-    EXPECT(indexed.color_count == 16);
-    EXPECT(indexed.rgb[0][0] == 255 && indexed.rgb[0][1] == 255 && indexed.rgb[0][2] == 255);
-    EXPECT(indexed.rgb[1][0] == 238 && indexed.rgb[1][1] == 238 && indexed.rgb[1][2] == 238);
-    EXPECT(indexed.rgb[15][0] == 0 && indexed.rgb[15][1] == 0 && indexed.rgb[15][2] == 0);
 
     REQUIRE(pp_build_gba(&indexed, &gba) == 0);
     REQUIRE(gba.tiles != NULL);
     EXPECT(((uintptr_t)gba.tiles % 128u) == 0);
-    EXPECT(gba.tiles_size == 2560u);
-    /* Top-left tile is index 0, so the first row is four zero bytes.
-     * The next tile's first row is index 12, low|high = 0xCC. */
-    EXPECT(gba.tiles[0] == 0x00 && gba.tiles[1] == 0x00 && gba.tiles[2] == 0x00 && gba.tiles[3] == 0x00);
-    EXPECT(gba.tiles[32] == 0xCC && gba.tiles[33] == 0xCC && gba.tiles[34] == 0xCC && gba.tiles[35] == 0xCC);
-    EXPECT(gba.palette[0] == 0x7FFFu);
-    EXPECT(gba.palette[1] == 0x77BDu);
-    EXPECT(gba.palette[15] == 0x0000u);
+    EXPECT(gba.tiles_size == tiles_size);
 
     scalar_tiles = (uint8_t *)malloc(gba.tiles_size);
     REQUIRE(scalar_tiles != NULL);
@@ -164,36 +168,107 @@ int main(void)
     }
     EXPECT(unpack_matches(gba.tiles, indexed.indices, img.width, img.height) == 0);
 
-    gold_bpp = read_file("tests/golden/tanoby_ruins_tiles.4bpp", &gold_bpp_n);
-    gold_pal = read_file("tests/golden/tanoby_ruins_tiles.pal", &gold_pal_n);
+    gold_bpp = read_file(gold_bpp_path, &gold_bpp_n);
+    gold_pal = read_file(gold_pal_path, &gold_pal_n);
     REQUIRE(gold_bpp != NULL && gold_pal != NULL);
-    expect_bytes("4bpp", gba.tiles, gba.tiles_size, gold_bpp, gold_bpp_n);
+    snprintf(bpp_label, sizeof bpp_label, "%s 4bpp", label);
+    snprintf(pal_label, sizeof pal_label, "%s pal", label);
+    expect_bytes(bpp_label, gba.tiles, gba.tiles_size, gold_bpp, gold_bpp_n);
     for (i = 0; i < 16; i++) {
         written_pal[i * 2] = (uint8_t)(gba.palette[i] & 0xFFu);
         written_pal[i * 2 + 1] = (uint8_t)(gba.palette[i] >> 8);
     }
-    expect_bytes("pal", written_pal, sizeof written_pal, gold_pal, gold_pal_n);
+    expect_bytes(pal_label, written_pal, sizeof written_pal, gold_pal, gold_pal_n);
 
-    REQUIRE(pp_write_outputs(&gba, "/tmp/pp_tanoby.4bpp", "/tmp/pp_tanoby.pal") == 0);
-    {
-        size_t n = 0;
-        uint8_t *disk = read_file("/tmp/pp_tanoby.4bpp", &n);
-        REQUIRE(disk != NULL);
-        expect_bytes("written 4bpp", disk, n, gold_bpp, gold_bpp_n);
-        free(disk);
-        disk = read_file("/tmp/pp_tanoby.pal", &n);
-        REQUIRE(disk != NULL);
-        expect_bytes("written pal", disk, n, gold_pal, gold_pal_n);
-        free(disk);
-    }
+    REQUIRE(pp_convert_png_to_gba(png, out_bpp, out_pal, &info) == 0);
+    EXPECT(info.width == width);
+    EXPECT(info.height == height);
+    EXPECT(info.color_count == indexed.color_count);
+    EXPECT(info.tiles_size == tiles_size);
+    EXPECT(info.neon_enabled == pp_neon_enabled());
+
+    disk = read_file(out_bpp, &n);
+    REQUIRE(disk != NULL);
+    snprintf(bpp_label, sizeof bpp_label, "%s written 4bpp", label);
+    expect_bytes(bpp_label, disk, n, gold_bpp, gold_bpp_n);
+    free(disk);
+    disk = read_file(out_pal, &n);
+    REQUIRE(disk != NULL);
+    snprintf(pal_label, sizeof pal_label, "%s written pal", label);
+    expect_bytes(pal_label, disk, n, gold_pal, gold_pal_n);
+    free(disk);
+
+    REQUIRE(pp_convert_png_to_gba(png, out_bpp, out_pal, NULL) == 0);
 
     free(scalar_tiles);
     free(gold_bpp);
     free(gold_pal);
-    free(origin);
     pp_gba_free(&gba);
     pp_indexed_free(&indexed);
     pp_image_free(&img);
+    return 0;
+}
+
+static int check_tanoby_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+    pp_gba gba;
+
+    REQUIRE(pp_png_decode_file("testdata/tanoby_ruins_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    EXPECT(indexed.rgb[0][0] == 255 && indexed.rgb[0][1] == 255 && indexed.rgb[0][2] == 255);
+    EXPECT(indexed.rgb[1][0] == 238 && indexed.rgb[1][1] == 238 && indexed.rgb[1][2] == 238);
+    EXPECT(indexed.rgb[15][0] == 0 && indexed.rgb[15][1] == 0 && indexed.rgb[15][2] == 0);
+    REQUIRE(pp_build_gba(&indexed, &gba) == 0);
+    /* Top-left tile is index 0, so the first row is four zero bytes.
+     * The next tile's first row is index 12, low|high = 0xCC. */
+    EXPECT(gba.tiles[0] == 0x00 && gba.tiles[1] == 0x00 && gba.tiles[2] == 0x00 && gba.tiles[3] == 0x00);
+    EXPECT(gba.tiles[32] == 0xCC && gba.tiles[33] == 0xCC && gba.tiles[34] == 0xCC && gba.tiles[35] == 0xCC);
+    EXPECT(gba.palette[0] == 0x7FFFu);
+    EXPECT(gba.palette[1] == 0x77BDu);
+    EXPECT(gba.palette[15] == 0x0000u);
+    pp_gba_free(&gba);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+static int check_game_corner_details(void)
+{
+    pp_image img;
+    pp_indexed indexed;
+
+    REQUIRE(pp_png_decode_file("testdata/game_corner_tiles.png", &img) == 0);
+    EXPECT(img.indexed == 1);
+    EXPECT(img.plte_count == 16);
+    EXPECT(img.has_trns == 0);
+    REQUIRE(pp_quantize(&img, &indexed) == 0);
+    EXPECT(indexed.color_count == 16);
+    pp_indexed_free(&indexed);
+    pp_image_free(&img);
+    return 0;
+}
+
+int main(void)
+{
+    REQUIRE(check_origin() == 0);
+    REQUIRE(check_tanoby_details() == 0);
+    REQUIRE(check_fixture("tanoby", "testdata/tanoby_ruins_tiles.png", "tests/golden/tanoby_ruins_tiles.4bpp",
+                          "tests/golden/tanoby_ruins_tiles.pal", "build/tanoby_ruins_tiles.4bpp",
+                          "build/tanoby_ruins_tiles.pal", 128, 40, 2560u) == 0);
+    REQUIRE(check_game_corner_details() == 0);
+    REQUIRE(check_fixture("game_corner", "testdata/game_corner_tiles.png", "tests/golden/game_corner_tiles.4bpp",
+                          "tests/golden/game_corner_tiles.pal", "build/game_corner_tiles.4bpp",
+                          "build/game_corner_tiles.pal", 128, 88, 5632u) == 0);
+
+    EXPECT(pp_convert_png_to_gba(NULL, "build/x.4bpp", "build/x.pal", NULL) == 1);
+    EXPECT(pp_convert_png_to_gba("testdata/missing.png", "build/x.4bpp", "build/x.pal", NULL) == 1);
+    EXPECT(pp_convert_last_error()[0] != '\0');
 
     if (g_failures) {
         fprintf(stderr, "test_golden: %d failure(s)\n", g_failures);

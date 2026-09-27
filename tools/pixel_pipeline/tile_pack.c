@@ -63,7 +63,10 @@ int pp_tile_pack_scalar(const uint8_t *indices, int width, int height, uint8_t *
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 
-/* Pack eight indices into four bytes. Low nibble is the even pixel.
+/* Pack eight indices into four bytes. Low nibble is the even (left) pixel.
+ * vreinterpret_u16_u8 plus the 0x0F00 mask assumes little-endian lanes
+ * (correct on AArch64 Apple Silicon and Linux). A big-endian port would
+ * swap nibbles; the scalar packer above does not depend on host endianness.
  * Example: pixels 1,2 → 0x21. */
 static void pack8_neon(const uint8_t *src, uint8_t *dst)
 {

@@ -1,8 +1,7 @@
 #include "png_decode.h"
 
 #include "aligned_alloc.h"
-
-#include "stb_image.h"
+#include "png_stb.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -208,15 +207,15 @@ int pp_png_decode_file(const char *path, pp_image *out)
         set_err("PNG is too large");
         return -1;
     }
-    px = stbi_load_from_memory(file, (int)file_len, &w, &h, &n, 4);
+    px = pp_png_stbi_load_from_memory(file, (int)file_len, &w, &h, &n, 4);
     free(file);
     if (!px) {
         pp_image_free(out);
-        set_err(stbi_failure_reason() ? stbi_failure_reason() : "PNG decode failed");
+        set_err(pp_png_stbi_failure_reason() ? pp_png_stbi_failure_reason() : "PNG decode failed");
         return -1;
     }
     if (w <= 0 || h <= 0 || (size_t)w > (SIZE_MAX / 4u) / (size_t)h) {
-        stbi_image_free(px);
+        pp_png_stbi_image_free(px);
         pp_image_free(out);
         set_err("PNG dimensions are invalid");
         return -1;
@@ -224,13 +223,13 @@ int pp_png_decode_file(const char *path, pp_image *out)
     nbytes = (size_t)w * (size_t)h * 4u;
     aligned = (uint8_t *)pp_aligned_alloc(nbytes);
     if (!aligned) {
-        stbi_image_free(px);
+        pp_png_stbi_image_free(px);
         pp_image_free(out);
         set_err("out of memory");
         return -1;
     }
     memcpy(aligned, px, nbytes);
-    stbi_image_free(px);
+    pp_png_stbi_image_free(px);
     out->width = w;
     out->height = h;
     out->rgba = aligned;
