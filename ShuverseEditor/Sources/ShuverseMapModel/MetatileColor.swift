@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stable fake color for a metatile id. Tileset pixels replace this later.
+/// Stable debug ramp for a metatile id. The Pallet Town canvas does not upload it.
 public enum MetatileColor {
     /// 1024 RGBA tuples, indexed by metatile id. The canvas uploads this once
     /// into a shared buffer; the tile shader samples it instead of baking

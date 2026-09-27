@@ -65,6 +65,7 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
         gridDirty.markAllDirty()
         markerDirty.markAllDirty()
         selectionDirty.markAllDirty()
+        bindTileset(for: map)
         if fit {
             needsFit = true
             fitIfPossible()
@@ -258,6 +259,49 @@ final class MapCanvasView: MTKView, MTKViewDelegate {
             return
         }
         publishCamera()
+    }
+
+    private func bindTileset(for map: MapDocument?) {
+        guard let map else {
+            gpu.setTexturedGround(false)
+            return
+        }
+        guard GBATileset.supports(map.tilesets) else {
+            gpu.setTexturedGround(false)
+            gpu.setStatusNote("No 4bpp tileset is loaded for this map.")
+            publishRendererNote()
+            return
+        }
+        if !gpu.tilesetReady {
+            guard let device else {
+                gpu.failTileset("Metal device is missing, so the shared tileset texture was not created.")
+                publishRendererNote()
+                assertionFailure(gpu.note ?? "Shared tileset upload failed.")
+                return
+            }
+            guard let directory = MapFileLocator.palletTownTilesetDirectory() else {
+                gpu.failTileset("Pallet Town 4bpp tileset files were not found.")
+                publishRendererNote()
+                assertionFailure(gpu.note ?? "Shared tileset upload failed.")
+                return
+            }
+            do {
+                let graphics = try GBATileset.loadPalletTown(from: directory)
+                if !gpu.uploadTileset(graphics, device: device) {
+                    publishRendererNote()
+                    assertionFailure(gpu.note ?? "Shared tileset upload failed.")
+                    return
+                }
+            } catch {
+                gpu.failTileset(error.localizedDescription)
+                publishRendererNote()
+                assertionFailure(gpu.note ?? "Shared tileset upload failed.")
+                return
+            }
+        }
+        gpu.setTexturedGround(true)
+        gpu.setStatusNote(nil)
+        publishRendererNote()
     }
 
     private func configure() {

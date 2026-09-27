@@ -10,8 +10,8 @@ public struct TilesetRef: Codable, Equatable, Hashable {
     }
 }
 
-/// Shared tileset identity. Atlas bytes and RGB555 palettes stay empty until
-/// tileset parse exists; maps dedupe on `id`.
+/// Shared tileset identity. Maps dedupe on `id`. Pallet Town's 4bpp atlas is
+/// loaded beside this record by `GBATileset`; the id stays small in workspace JSON.
 public struct Tileset: Codable, Equatable, Hashable {
     public var id: String
 

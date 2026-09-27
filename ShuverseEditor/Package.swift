@@ -40,6 +40,7 @@ targets.append(contentsOf: [
         path: "App",
         resources: [
             .copy("Resources/PalletTown.json"),
+            .copy("Resources/tilesets"),
         ]
     ),
 ])

@@ -35,6 +35,8 @@ def main() -> int:
         "[[stage_in]]",
         "kernel void map_tile_overlay",
         "imageblock<TilePixel>",
+        "fragment float4 map_tile_fragment",
+        "texture2d<uint, access::read>",
     ):
         if needle not in source:
             sys.exit(f"extracted Metal is missing {needle!r}")
