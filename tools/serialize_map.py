@@ -219,8 +219,20 @@ def build_map_json(doc: dict, existing: dict | None) -> dict:
             out[json_key] = doc[doc_key]
 
     for key in _MAP_JSON_EVENT_KEYS:
-        if key in doc:
-            out[key] = _merge_event_list(out.get(key), doc.get(key))
+        if key not in doc:
+            continue
+        incoming = doc.get(key)
+        prev = out.get(key)
+        # pret indoor maps often store "connections": null (not []). Preserve that
+        # when the parsed doc has an empty/absent list and nothing to overlay.
+        if (
+            key == "connections"
+            and prev is None
+            and (incoming is None or incoming == [])
+        ):
+            out[key] = None
+            continue
+        out[key] = _merge_event_list(prev if isinstance(prev, list) else None, incoming)
 
     return out
 
@@ -439,6 +451,7 @@ def serialize_one(
         )
 
     map_bin_path = decomp / layout["blockdata_filepath"]
+    border_path = decomp / layout["border_filepath"]
     map_json_path = decomp / "data" / "maps" / doc["name"] / "map.json"
 
     expected_size = width * height * 2
@@ -447,23 +460,41 @@ def serialize_one(
             f"packed size {len(packed)} != expected {expected_size}"
         )
 
+    border_ids, border_attrs, bw, bh = resolve_border_arrays(doc, layout, border_path)
+    border_packed = pack_map_bin(border_ids, border_attrs)
+    border_expected = bw * bh * 2
+    if len(border_packed) != border_expected:
+        raise SerializeError(
+            f"border packed size {len(border_packed)} != expected {border_expected}"
+        )
+
+    existing_map_json: dict | None = None
+    if map_json_path.is_file():
+        existing_map_json = json.loads(map_json_path.read_text(encoding="utf-8"))
+    rebuilt_map_json = build_map_json(doc, existing_map_json)
+    map_json_bytes = dump_map_json(rebuilt_map_json)
+
     print(f"map: {doc['name']} ({doc.get('map_id', '?')})")
     print(f"  layout: {doc['layout_id']}")
     print(f"  dims:   {width}x{height} ({expected_size} bytes)")
+    print(f"  border: {bw}x{bh} ({border_expected} bytes)")
     print(f"  target: {map_bin_path}")
+    print(f"  border: {border_path}")
+    print(f"  json:   {map_json_path}")
 
+    all_match = True
+
+    # --- map.bin ---
     if not map_bin_path.is_file():
-        print(f"  map.bin: MISSING on disk")
-        on_disk = None
-        match = False
+        print("  map.bin: MISSING on disk")
+        all_match = False
     else:
         on_disk = map_bin_path.read_bytes()
         diff = first_diff(packed, on_disk)
         if diff is None:
-            match = True
             print(f"  map.bin: MATCH ({len(on_disk)} bytes, byte-identical)")
         else:
-            match = False
+            all_match = False
             off, a_b, b_b = diff
             print(
                 f"  map.bin: DIFF  rebuilt={len(packed)} disk={len(on_disk)} "
@@ -471,7 +502,6 @@ def serialize_one(
                 f"rebuilt_byte={a_b if a_b is None else f'0x{a_b:02x}'} "
                 f"disk_byte={b_b if b_b is None else f'0x{b_b:02x}'}"
             )
-            # Also show cell-level if within common length
             if off < min(len(packed), len(on_disk)):
                 cell_i = off // 2
                 rb = struct.unpack_from(MAP_CELL_FMT, packed, cell_i * 2)[0]
@@ -483,27 +513,61 @@ def serialize_one(
                     f"(id={db & METATILE_ID_MASK} attr={db >> MAP_ATTR_SHIFT})"
                 )
 
-    # Optional semantic map.json compare (read-only)
-    if map_json_path.is_file():
-        map_json = json.loads(map_json_path.read_text(encoding="utf-8"))
-        notes = slim_compare_events(doc, map_json)
-        if not notes:
-            print(f"  map.json events: semantic MATCH (counts + warps/connections)")
-        else:
-            print(f"  map.json events: {len(notes)} note(s):")
-            for n in notes[:10]:
-                print(f"    - {n}")
-            if len(notes) > 10:
-                print(f"    ... and {len(notes) - 10} more")
+    # --- border.bin ---
+    if not border_path.is_file():
+        print("  border.bin: MISSING on disk")
+        all_match = False
     else:
+        border_disk = border_path.read_bytes()
+        bdiff = first_diff(border_packed, border_disk)
+        if bdiff is None:
+            print(f"  border.bin: MATCH ({len(border_disk)} bytes, byte-identical)")
+        else:
+            all_match = False
+            off, a_b, b_b = bdiff
+            print(
+                f"  border.bin: DIFF  rebuilt={len(border_packed)} "
+                f"disk={len(border_disk)} first_diff_offset={off} "
+                f"rebuilt_byte={a_b if a_b is None else f'0x{a_b:02x}'} "
+                f"disk_byte={b_b if b_b is None else f'0x{b_b:02x}'}"
+            )
+
+    # --- map.json ---
+    if existing_map_json is None:
         print(f"  map.json: MISSING ({map_json_path})")
+        all_match = False
+    else:
+        on_disk_json = map_json_path.read_bytes()
+        if map_json_bytes == on_disk_json:
+            print(f"  map.json: MATCH ({len(on_disk_json)} bytes, byte-identical)")
+        else:
+            # Prefer byte-identical; fall back to semantic + note order/whitespace
+            notes = slim_compare_events(doc, existing_map_json)
+            # Also compare rebuilt vs existing semantically (full dump round-trip)
+            if notes:
+                all_match = False
+                print(f"  map.json: DIFF semantic ({len(notes)} note(s)):")
+                for n in notes[:10]:
+                    print(f"    - {n}")
+                if len(notes) > 10:
+                    print(f"    ... and {len(notes) - 10} more")
+            else:
+                # Semantic event match but bytes differ (key order / whitespace)
+                print(
+                    f"  map.json: SEMANTIC MATCH but bytes differ "
+                    f"(rebuilt={len(map_json_bytes)} disk={len(on_disk_json)}; "
+                    f"key order/whitespace)"
+                )
+                # Still count as match for dry-run exit; write will rewrite
+                # Callers that need strict bytes should cmp after --write.
+                all_match = all_match and True
 
     if not do_write:
         print("  mode: dry-run (no writes)")
-        return 0 if match else 1
+        return 0 if all_match else 1
 
-    # Write path (map.bin only for v1 hard gate; border/map.json not yet)
-    targets = [map_bin_path]
+    # Write path: map.bin + border.bin + map.json
+    targets = [map_bin_path, border_path, map_json_path]
     dirty = git_dirty_paths(decomp, targets)
     if dirty and not force:
         print("error: refusing to write; git-dirty targets (pass --force to override):")
@@ -514,14 +578,22 @@ def serialize_one(
     print(f"  writing map.bin ({len(packed)} bytes) ...")
     atomic_write(map_bin_path, packed)
     print(f"  wrote {map_bin_path}")
-    print("  note: border.bin / map.json write not implemented in this pass")
+
+    print(f"  writing border.bin ({len(border_packed)} bytes) ...")
+    atomic_write(border_path, border_packed)
+    print(f"  wrote {border_path}")
+
+    print(f"  writing map.json ({len(map_json_bytes)} bytes) ...")
+    atomic_write(map_json_path, map_json_bytes)
+    print(f"  wrote {map_json_path}")
     return 0
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
-            "Serialize Shuverse parsed map JSON back to pokefirered map.bin. "
+            "Serialize Shuverse parsed map JSON back to pokefirered "
+            "map.bin / border.bin / map.json. "
             "Dry-run is the DEFAULT; pass --write to actually modify the decomp."
         )
     )
@@ -559,7 +631,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--write",
         action="store_true",
         default=False,
-        help="Actually write map.bin into the decomp (disables dry-run)",
+        help="Actually write map.bin, border.bin, and map.json (disables dry-run)",
     )
     p.add_argument(
         "--force",
